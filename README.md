@@ -248,6 +248,44 @@ idempotent (re-running yields byte-identical aspects), uses no LLM, and writes t
 validated SDK. [`docs/METADATA_CONTRACT.md`](docs/METADATA_CONTRACT.md) is the **frozen
 contract** the policy engine (Batch 4) reads — nothing else.
 
+### Policy engine + dual-namespace graph (Batch 4)
+
+The deterministic governance engine ([`src/ortholineage_guardian/policy/`](src/ortholineage_guardian/policy/))
+runs three checks and decides whether a violation exists **purely from DataHub metadata
+read over MCP** — it never opens the dbt SQL, the manifest, `catalog.json`, or a DuckDB
+database (enforced by a test with a CPython audit hook). No LLM, no write-back.
+
+| Check | Fires when | Rule class |
+|---|---|---|
+| `PHI_EXPORT_PATH` | a `DirectIdentifier` column has column-lineage into a `research_export` dataset | export-governance |
+| `MISSINGNESS_COLLAPSE` | an `ExplicitMissingness` value column survives downstream but its paired `_missingness` column was dropped | completeness |
+| `UNVALIDATED_ML_SOURCE` | an `ml_feature_table` feature is sourced directly from an `unvalidated` dataset, bypassing the validated registry | readiness |
+
+The stale-`arrival_time` reference is reported as a migration-drift **observation** (the
+impact traversal), not one of the three checks.
+
+To make the **zero-false-positives-on-baseline** claim provable on one GMS, both scenarios
+are ingested under **distinct URN namespaces** (`faulty` → env `PROD`, `baseline` → env
+`DEV`) and both carry the full clinical contract. One command builds, ingests, emits, and
+MCP-verifies the whole dual-world graph:
+
+```bash
+export DATAHUB_GMS_URL=http://localhost:8090
+bash scripts/ingest_all.sh
+```
+
+Then run the engine against either world:
+
+```bash
+uv run --with mcp python scripts/run_policy_engine.py --namespace faulty     # 3 findings
+uv run --with mcp python scripts/run_policy_engine.py --namespace baseline    # 0 findings
+```
+
+Tests (run with `uv run --with mcp pytest -q`): `tests/test_policy_faulty_positives.py`
+(all three fire with correct evidence), `tests/test_policy_baseline_zero_fp.py` (the
+headline zero-false-positive claim), and `tests/test_detection_provenance.py` (the engine
+opens no SQL/manifest/DuckDB). They skip gracefully when DataHub/MCP is unavailable.
+
 ---
 
 ## Repository layout (Batch 1)

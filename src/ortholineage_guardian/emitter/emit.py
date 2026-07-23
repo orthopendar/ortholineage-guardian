@@ -82,9 +82,9 @@ def _schema_field_paths(g: DataHubGraph, dataset_urn: str) -> list[str]:
     return [f.fieldPath for f in sm.fields] if sm else []
 
 
-def _emit_column_terms(g: DataHubGraph, model: str) -> dict[str, list[str]]:
+def _emit_column_terms(g: DataHubGraph, model: str, ns: C.Namespace) -> dict[str, list[str]]:
     """Attach column glossary terms via editableSchemaMetadata (the MCP-readable path)."""
-    dataset_urn = C.dataset_urn(model)
+    dataset_urn = C.dataset_urn(model, ns)
     fields = _schema_field_paths(g, dataset_urn)
     applied: dict[str, list[str]] = {}
     field_infos = []
@@ -118,11 +118,11 @@ def _emit_column_terms(g: DataHubGraph, model: str) -> dict[str, list[str]]:
     return applied
 
 
-def _emit_dataset_signals(g: DataHubGraph, model: str) -> dict:
+def _emit_dataset_signals(g: DataHubGraph, model: str, ns: C.Namespace) -> dict:
     signals = C.DATASET_SIGNALS.get(model)
     if not signals:
         return {}
-    dataset_urn = C.dataset_urn(model)
+    dataset_urn = C.dataset_urn(model, ns)
     props = signals.get("properties", {})
     if props:
         g.emit(
@@ -152,18 +152,19 @@ def _emit_dataset_signals(g: DataHubGraph, model: str) -> dict:
     return signals
 
 
-def emit_all(server: str | None = None) -> None:
-    """Define the vocabulary, then apply column + dataset signals. Idempotent."""
+def emit_all(server: str | None = None, ns: C.Namespace = C.FAULTY) -> None:
+    """Define the vocabulary, then apply column + dataset signals to `ns`. Idempotent."""
     C.assert_amendment()
     g = _graph(server)
+    print(f"[emit ] namespace={ns.name} (db={ns.database}, env={ns.env})")
 
     n_terms = _define_glossary_terms(g)
     n_props = _define_structured_properties(g)
     print(f"[define] {n_terms} glossary terms, {n_props} structured properties")
 
     for model in C.MODELS:
-        col = _emit_column_terms(g, model)
-        ds = _emit_dataset_signals(g, model)
+        col = _emit_column_terms(g, model, ns)
+        ds = _emit_dataset_signals(g, model, ns)
         col_desc = ", ".join(f"{k}={v}" for k, v in col.items()) or "-"
         ds_props = ds.get("properties", {})
         ds_terms = ds.get("terms", [])

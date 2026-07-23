@@ -30,10 +30,12 @@ _contract_path = (
 )
 _spec = importlib.util.spec_from_file_location("guardian_contract", _contract_path)
 C = importlib.util.module_from_spec(_spec)
+sys.modules["guardian_contract"] = C  # needed for @dataclass annotation resolution
 _spec.loader.exec_module(C)
 
 GMS = os.environ.get("DATAHUB_GMS_URL", "http://localhost:8090")
 _failures: list[str] = []
+NS = C.FAULTY  # set from --namespace in __main__
 
 
 def _text(result) -> str:
@@ -48,7 +50,7 @@ def _check(ok: bool, label: str) -> None:
 
 async def _column_terms(session, model: str) -> dict[str, list[str]]:
     """MCP list_schema_fields -> {fieldPath: editedGlossaryTerms}."""
-    res = await session.call_tool("list_schema_fields", {"urn": C.dataset_urn(model)})
+    res = await session.call_tool("list_schema_fields", {"urn": C.dataset_urn(model, NS)})
     data = json.loads(_text(res))
     return {
         f["fieldPath"]: f.get("editedGlossaryTerms", []) for f in data.get("fields", [])
@@ -56,7 +58,7 @@ async def _column_terms(session, model: str) -> dict[str, list[str]]:
 
 
 async def _dataset_entity(session, model: str) -> dict:
-    res = await session.call_tool("get_entities", {"urns": C.dataset_urn(model)})
+    res = await session.call_tool("get_entities", {"urns": C.dataset_urn(model, NS)})
     return json.loads(_text(res))
 
 
@@ -68,7 +70,7 @@ async def main() -> None:
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            print(f"# MCP connected to {GMS}\n")
+            print(f"# MCP connected to {GMS}  namespace={NS.name} (db={NS.database}, env={NS.env})\n")
 
             # ---- COLUMN-level glossary terms (the checks' column signals) ----
             print("== COLUMN-level signals (MCP list_schema_fields -> editedGlossaryTerms) ==")
@@ -86,14 +88,14 @@ async def main() -> None:
             # ---- exact column shape MCP returns (Batch 4 parses this) ----
             print("\n== Exact MCP column shape for the load-bearing columns ==")
             res = await session.call_tool(
-                "list_schema_fields", {"urn": C.dataset_urn("research_export")}
+                "list_schema_fields", {"urn": C.dataset_urn("research_export", NS)}
             )
             for f in json.loads(_text(res)).get("fields", []):
                 if f["fieldPath"] == "patient_id":
                     print("  research_export.patient_id (sensitivity):")
                     print("   ", json.dumps(f))
             res = await session.call_tool(
-                "list_schema_fields", {"urn": C.dataset_urn("stg_ed_documentation")}
+                "list_schema_fields", {"urn": C.dataset_urn("stg_ed_documentation", NS)}
             )
             for f in json.loads(_text(res)).get("fields", []):
                 if f["fieldPath"] == "gcs_total":
@@ -129,4 +131,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--namespace", choices=list(C.NAMESPACES), default="faulty")
+    NS = C.NAMESPACES[ap.parse_args().namespace]
     asyncio.run(main())
