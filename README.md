@@ -286,6 +286,44 @@ Tests (run with `uv run --with mcp pytest -q`): `tests/test_policy_faulty_positi
 headline zero-false-positive claim), and `tests/test_detection_provenance.py` (the engine
 opens no SQL/manifest/DuckDB). They skip gracefully when DataHub/MCP is unavailable.
 
+### Explanation + remediation drafting (Batch 5)
+
+**Authority split (the judging narrative):**
+
+> Deterministic code decides whether a violation exists. The LLM never decides — it turns a
+> deterministic, lineage-grounded finding into an understandable explanation and a draft
+> remediation, which is schema-validated before any of it is written anywhere. Write-back is
+> performed by validated application code, not by the model.
+
+The LLM layer ([`src/ortholineage_guardian/llm/`](src/ortholineage_guardian/llm/)) takes the
+engine's `Finding` objects as **input** and produces prose + a draft dbt patch as **output**.
+`schema_guard.py` validates everything the model returns and rejects on mismatch, with two
+load-bearing guards: an **entity whitelist** (every dataset/column/term named in the output
+must come from the finding's evidence or the metadata contract — the anti-hallucination
+property) and a **contract-knowledge guard** (the output may never assert observed row data,
+since the engine reads metadata only). A rejected output falls back to template mode; it is
+never silently used.
+
+The LLM is **never required for correctness.** With no API key present — or with `--no-llm`
+— the same validated objects are rendered deterministically from templates, so a judge with
+no key still gets a complete, useful artifact:
+
+```bash
+export DATAHUB_GMS_URL=http://localhost:8090
+uv run --with mcp python scripts/generate_remediation.py --namespace faulty            # LLM if ANTHROPIC_API_KEY set, else template
+uv run --with mcp python scripts/generate_remediation.py --namespace faulty --no-llm   # force deterministic template mode
+```
+
+Set `ANTHROPIC_API_KEY` (and optionally `GUARDIAN_MODEL`, default `claude-opus-4-8`) to
+enable the LLM — see [`.env.example`](.env.example). Committed golden artifacts
+([`tests/golden/`](tests/golden/)) make the template output inspectable without a running
+stack or a key; regenerate them with `uv run python scripts/generate_goldens.py`. Offline
+tests: `tests/test_schema_guard.py` (malformed / hallucinated-entity / claimed-observation
+rejections, mocked — no network), `tests/test_no_llm_fallback.py`, `tests/test_golden_stability.py`.
+
+Rendering the patch + impact report to `examples/` and writing findings back into DataHub
+are Batch 6.
+
 ---
 
 ## Repository layout (Batch 1)
