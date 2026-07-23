@@ -26,23 +26,33 @@ _SYSTEM = (
 )
 
 
-def generate(user_prompt: str, output_model: type[BaseModel]) -> dict:
+class TruncationError(RuntimeError):
+    """Raised when the model hit max_tokens mid-JSON. Distinct from a schema/JSON error so
+    the log says 'truncated — raise max_tokens' rather than a misleading validation failure."""
+
+
+def generate(user_prompt: str, output_model: type[BaseModel], max_tokens: int = 8192) -> dict:
     """Call Claude with structured output; return the parsed object as a plain dict.
 
-    Raises on any SDK/parse/refusal error so the caller can fall back to template mode.
+    Checks stop_reason FIRST: a refusal or a max_tokens truncation raises a distinct, explicit
+    error. Raises on any SDK/parse error so the caller can fall back to template mode.
     """
     import anthropic  # lazy: only when a key is present and the LLM path is taken
 
     client = anthropic.Anthropic()
     message = client.messages.parse(
         model=config.model_id(),
-        max_tokens=2048,
+        max_tokens=max_tokens,
         system=_SYSTEM,
         messages=[{"role": "user", "content": user_prompt}],
         output_format=output_model,
     )
     if message.stop_reason == "refusal":
         raise RuntimeError("LLM refused the request")
+    if message.stop_reason == "max_tokens":
+        raise TruncationError(
+            f"model output truncated — raise max_tokens (was {max_tokens})"
+        )
     parsed = message.parsed_output
     if parsed is None:
         raise RuntimeError("LLM returned no parseable structured output")

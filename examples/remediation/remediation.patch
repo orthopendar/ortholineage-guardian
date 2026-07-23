@@ -1,0 +1,103 @@
+# OrthoLineage Guardian — proposed remediation for the faulty migration.
+# Generated from validated findings; apply with `git apply`.
+diff --git a/models/export/research_export.sql b/models/export/research_export.sql
+--- a/models/export/research_export.sql
++++ b/models/export/research_export.sql
+@@ -17,13 +17,6 @@
+     registry_case_id,
+     registry_site_code,
+ 
+-{% if var('scenario') == 'faulty' %}
+-    -- PLANTED DEFECT: PHI_EXPORT_PATH
+-    -- The direct identifier patient_id is retained in the research export select list.
+-    -- (In baseline it is dropped; a de-identified export must exclude direct identifiers.)
+-    patient_id,
+-{% endif %}
+-
+     -- quasi-identifier encounter timestamp (post-rename); retained but not a direct id
+     ed_arrival_datetime,
+     injury_datetime,
+diff --git a/models/ml/ml_feature_table.sql b/models/ml/ml_feature_table.sql
+--- a/models/ml/ml_feature_table.sql
++++ b/models/ml/ml_feature_table.sql
+@@ -12,16 +12,6 @@
+     select * from {{ ref('trauma_registry') }}
+ )
+ 
+-{% if var('scenario') == 'faulty' %}
+--- raw, unvalidated source joined only under faulty (the bypass path)
+-, raw_unvalidated as (
+-    select
+-        registry_case_id,
+-        mode_of_arrival
+-    from {{ ref('stg_ed_documentation') }}
+-)
+-{% endif %}
+-
+ select
+     registry.registry_case_id,
+ 
+@@ -34,15 +24,4 @@
+          then 1 else 0 end                                       as mechanism_present_flag,
+     registry.age_at_injury_band
+ 
+-{% if var('scenario') == 'faulty' %}
+-    -- PLANTED DEFECT: UNVALIDATED_ML_SOURCE
+-    -- This feature is read straight from stg_ed_documentation (validation_status:
+-    -- unvalidated), bypassing the governed trauma_registry model.
+-    , raw_unvalidated.mode_of_arrival                            as raw_mode_of_arrival_feature
+-{% endif %}
+-
+ from registry
+-{% if var('scenario') == 'faulty' %}
+-left join raw_unvalidated
+-    on raw_unvalidated.registry_case_id = registry.registry_case_id
+-{% endif %}
+diff --git a/models/registry/trauma_registry.sql b/models/registry/trauma_registry.sql
+--- a/models/registry/trauma_registry.sql
++++ b/models/registry/trauma_registry.sql
+@@ -33,26 +33,10 @@
+     mechanism_category,
+     mechanism_category_missingness,
+ 
+-{% if var('scenario') == 'faulty' %}
+-    -- PLANTED DEFECT: MISSINGNESS_COLLAPSE
+-    -- The >=2 distinct explicit missingness states (NOT_DOCUMENTED, NOT_ASSESSED, ...)
+-    -- are collapsed to a single SQL NULL, AND the paired gcs_total_missingness state
+-    -- column is DROPPED from the projection entirely. Downstream, a documented
+-    -- "not assessed" is now indistinguishable from a "not documented" or a bare null.
+-    -- The dropped state column is a schema-shape difference detectable from metadata
+-    -- alone (no need to read this SQL).
+-    case
+-        when gcs_total_missingness in ('NOT_DOCUMENTED', 'NOT_ASSESSED') then null
+-        else gcs_total
+-    end                                 as gcs_total,
+-    -- (gcs_total_missingness intentionally NOT selected here in faulty)
+-{% else %}
+     -- Baseline: the value and its paired explicit-missingness state column are BOTH
+     -- preserved, so every distinct controlled-vocabulary state survives downstream.
+     gcs_total,
+     gcs_total_missingness,
+-{% endif %}
+-
+     gcs_eye,
+     gcs_verbal,
+     gcs_motor,
+diff --git a/models/report/dashboard_report.sql b/models/report/dashboard_report.sql
+--- a/models/report/dashboard_report.sql
++++ b/models/report/dashboard_report.sql
+@@ -16,14 +16,6 @@
+     sum(gcs_missing_flag)       as gcs_missing_count,
+     sum(mechanism_present_flag) as mechanism_present_count,
+ 
+-{% if var('scenario') == 'faulty' %}
+-    -- PLANTED DEFECT: STALE_REFERENCE
+-    -- Still exposes the pre-rename name `arrival_time` even though trauma_registry
+-    -- renamed it to ed_arrival_datetime. The stale name reappears downstream.
+-    max(ed_arrival_datetime)    as arrival_time
+-{% else %}
+     -- post-rename name used correctly
+     max(ed_arrival_datetime)    as ed_arrival_datetime
+-{% endif %}
+-
+ from features

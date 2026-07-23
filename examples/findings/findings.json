@@ -1,0 +1,89 @@
+[
+  {
+    "check": "PHI_EXPORT_PATH",
+    "namespace": "faulty",
+    "rule_class": "export_governance",
+    "severity": "high",
+    "summary": "Direct identifier research_export.patient_id is retained in a research export (must be excluded).",
+    "evidence": {
+      "identifier_column": "research_export.patient_id",
+      "export_dataset": "research_export",
+      "export_properties": {
+        "data_product": "research_export",
+        "deidentification_required": "true"
+      },
+      "source_column": null,
+      "paired_column": null,
+      "source_dataset": null,
+      "collapsed_in_dataset": null,
+      "feature_column": null,
+      "unvalidated_source": null,
+      "validation_status": null,
+      "path": [
+        "stg_ed_documentation.patient_id",
+        "trauma_registry.patient_id",
+        "research_export.patient_id"
+      ],
+      "signals_read": [
+        "column term DirectIdentifier",
+        "dataset structuredProperty guardian_data_product",
+        "column-level lineage"
+      ]
+    }
+  },
+  {
+    "check": "MISSINGNESS_COLLAPSE",
+    "namespace": "faulty",
+    "rule_class": "completeness",
+    "severity": "high",
+    "summary": "Explicit-missingness contract on gcs_total collapsed: trauma_registry keeps gcs_total but dropped the paired gcs_total_missingness carried by stg_ed_documentation.",
+    "evidence": {
+      "identifier_column": null,
+      "export_dataset": null,
+      "export_properties": {},
+      "source_column": "stg_ed_documentation.gcs_total",
+      "paired_column": "gcs_total_missingness",
+      "source_dataset": "stg_ed_documentation",
+      "collapsed_in_dataset": "trauma_registry",
+      "feature_column": null,
+      "unvalidated_source": null,
+      "validation_status": null,
+      "path": [
+        "stg_ed_documentation.gcs_total",
+        "trauma_registry.gcs_total"
+      ],
+      "signals_read": [
+        "column term ExplicitMissingness",
+        "schema shape (paired column presence/absence)",
+        "column-level lineage"
+      ]
+    }
+  },
+  {
+    "check": "UNVALIDATED_ML_SOURCE",
+    "namespace": "faulty",
+    "rule_class": "readiness",
+    "severity": "high",
+    "summary": "ML feature ml_feature_table.raw_mode_of_arrival_feature is derived directly from the unvalidated source stg_ed_documentation, bypassing the validated registry.",
+    "evidence": {
+      "identifier_column": null,
+      "export_dataset": null,
+      "export_properties": {},
+      "source_column": null,
+      "paired_column": null,
+      "source_dataset": null,
+      "collapsed_in_dataset": null,
+      "feature_column": "ml_feature_table.raw_mode_of_arrival_feature",
+      "unvalidated_source": "stg_ed_documentation",
+      "validation_status": "unvalidated",
+      "path": [
+        "stg_ed_documentation",
+        "ml_feature_table.raw_mode_of_arrival_feature"
+      ],
+      "signals_read": [
+        "dataset structuredProperty guardian_validation_status",
+        "column-level lineage (direct upstream, registry not mediating)"
+      ]
+    }
+  }
+]
