@@ -1,0 +1,36 @@
+# DataHub dbt ingestion recipe for OrthoLineage Guardian.
+#
+# Ingests the FAULTY dbt state (the demo detects governance defects in the faulty
+# scenario). It points at the CANONICAL target/manifest.json + target/catalog.json —
+# NOT the per-scenario manifest.baseline.json / manifest.faulty.json pytest fixtures.
+#
+# Run from the repo root (paths are relative to CWD), after `bash scripts/build.sh`:
+#     export DATAHUB_GMS_URL=http://localhost:8090
+#     uv tool run --python 3.11 --from acryl-datahub \
+#         datahub ingest -c ingest/dbt_source.yml
+#
+# Everything here is public config: no tokens. On the local quickstart, metadata-service
+# auth is disabled, so DATAHUB_GMS_TOKEN is unset/empty. For a secured instance, set
+# DATAHUB_GMS_TOKEN in your environment (see .env.example) — it is read below.
+
+source:
+  type: dbt
+  config:
+    manifest_path: "target/manifest.json"
+    catalog_path: "target/catalog.json"
+    # The warehouse platform the dbt models materialise into.
+    target_platform: duckdb
+    platform_instance: ortholineage_guardian
+    # Emit column-level lineage (named-column SELECTs make identifier/timestamp paths
+    # resolvable). This is the substrate the impact traversal walks.
+    include_column_lineage: true
+    # Keep the graph legible: model + seed + source nodes; skip test nodes as assets.
+    entities_enabled:
+      test_definitions: "NO"
+      test_results: "NO"
+
+sink:
+  type: datahub-rest
+  config:
+    server: "${DATAHUB_GMS_URL:-http://localhost:8090}"
+    token: "${DATAHUB_GMS_TOKEN:-}"

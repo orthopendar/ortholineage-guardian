@@ -12,3 +12,7 @@ __pycache__/
 
 # dbt user-local
 .user.yml
+
+# secrets / local env (never commit; see .env.example)
+.env
+
