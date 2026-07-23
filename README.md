@@ -185,6 +185,52 @@ For this project, the **only** direct identifiers are `patient_id` and
 
 ---
 
+## Run DataHub locally (Batch 2)
+
+Batch 2 stands up DataHub OSS via the official quickstart, ingests the **faulty** dbt
+state (with real table- and column-level lineage), and proves the read + write metadata
+primitives. Requires **Docker** and the [`uv`](https://docs.astral.sh/uv/) toolchain.
+
+The DataHub CLI is installed as an **isolated `uv` tool** so it never touches this dbt
+project's environment:
+
+```bash
+uv tool install --python 3.11 'acryl-datahub[dbt]'
+```
+
+Bring DataHub up, build + ingest the faulty state, and prove the MCP read path:
+
+```bash
+# 1. Start DataHub. GMS is published on host port 8090 (remapped off the default 8080,
+#    which is commonly taken; override with DATAHUB_MAPPED_GMS_PORT).
+bash scripts/datahub_up.sh
+export DATAHUB_GMS_URL=http://localhost:8090        # see .env.example
+
+# 2. Build the faulty dbt artifacts, then ingest them into DataHub.
+bash scripts/build.sh
+uv tool run --python 3.11 --from 'acryl-datahub[dbt]' datahub ingest -c ingest/dbt_source.yml
+
+# 3. Smoke-test the DataHub MCP read path (lineage + schema/properties).
+uv run --with mcp python scripts/mcp_smoke.py
+
+# Tear down (keeps metadata volumes; pass --nuke to wipe them).
+bash scripts/datahub_down.sh
+```
+
+The DataHub UI is at **http://localhost:9002** (default login `datahub` / `datahub`).
+
+**Secrets:** no tokens are committed. Copy [`.env.example`](.env.example) to `.env`
+(gitignored). The local quickstart runs with metadata-service auth disabled, so
+`DATAHUB_GMS_TOKEN` may be empty; set it for a secured instance.
+
+**Proven in Batch 2** (see [docs/BATCH2_CAPABILITY_MATRIX.md](docs/BATCH2_CAPABILITY_MATRIX.md)):
+all 6 models ingest with the table-level DAG (including `ml_feature_table`'s dual parents),
+**column-level lineage resolves**, `schema.yml` owners **map to DataHub ownership**, the
+MCP read path works, and the Python-SDK write primitives (tag, description, incident) all
+succeed. That document is the frozen contract the remaining batches build against.
+
+---
+
 ## Repository layout (Batch 1)
 
 ```
