@@ -1,0 +1,43 @@
+[
+  {
+    "check": "PHI_EXPORT_PATH",
+    "namespace": "faulty",
+    "title": "Direct identifier reaches a research export",
+    "what_broke": "The column research_export.patient_id carries the DirectIdentifier class, and its column-level lineage reaches research_export, a dataset whose guardian_data_product property is research_export. Lineage path: stg_ed_documentation.patient_id -> trauma_registry.patient_id -> research_export.patient_id.",
+    "why_it_matters": "A de-identified research export must never carry a direct identifier: the export's deidentification_required contract forbids it. This is an export-governance violation, not a clinical judgement.",
+    "downstream_impact": "Any consumer of research_export inherits the identifier, so the de-identification guarantee is broken for everything downstream of the export.",
+    "remediation_summary": "Drop research_export.patient_id from research_export.",
+    "affected_entities": [
+      "research_export",
+      "research_export.patient_id"
+    ]
+  },
+  {
+    "check": "MISSINGNESS_COLLAPSE",
+    "namespace": "faulty",
+    "title": "Explicit-missingness contract collapsed downstream",
+    "what_broke": "The value column stg_ed_documentation.gcs_total carries the ExplicitMissingness class and is paired in stg_ed_documentation with the state column gcs_total_missingness. Downstream, trauma_registry keeps the value column but drops the paired state column.",
+    "why_it_matters": "An explicit-missingness contract distinguishes governed reasons such as NOT_DOCUMENTED and NOT_ASSESSED from a bare SQL NULL; the contract admits those as dispositioned states while a null on an expected field is the blocking state. Dropping the paired state column erases that distinction, which is a completeness violation.",
+    "downstream_impact": "Consumers reading stg_ed_documentation.gcs_total from trauma_registry can no longer tell a governed absence from a bare null.",
+    "remediation_summary": "Restore the paired gcs_total_missingness column alongside stg_ed_documentation.gcs_total in trauma_registry.",
+    "affected_entities": [
+      "gcs_total_missingness",
+      "stg_ed_documentation",
+      "stg_ed_documentation.gcs_total",
+      "trauma_registry"
+    ]
+  },
+  {
+    "check": "UNVALIDATED_ML_SOURCE",
+    "namespace": "faulty",
+    "title": "ML feature sourced from an unvalidated dataset",
+    "what_broke": "The feature ml_feature_table.raw_mode_of_arrival_feature draws directly from stg_ed_documentation, whose guardian_validation_status property is unvalidated, bypassing the validated registry that should mediate it.",
+    "why_it_matters": "A feature grounded in an unvalidated source inherits its readiness gap: the governed registry exists precisely so ML consumers read validated data. This is a readiness violation.",
+    "downstream_impact": "Every model trained on ml_feature_table.raw_mode_of_arrival_feature inherits the unvalidated provenance of stg_ed_documentation.",
+    "remediation_summary": "Repoint ml_feature_table.raw_mode_of_arrival_feature to derive from the validated registry.",
+    "affected_entities": [
+      "ml_feature_table.raw_mode_of_arrival_feature",
+      "stg_ed_documentation"
+    ]
+  }
+]

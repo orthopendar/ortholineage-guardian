@@ -1,0 +1,40 @@
+{
+  "namespace": "faulty",
+  "summary": "Draft remediation for 3 governance findings plus the stale-reference observation, in namespace faulty.",
+  "findings_covered": [
+    "PHI_EXPORT_PATH",
+    "MISSINGNESS_COLLAPSE",
+    "UNVALIDATED_ML_SOURCE"
+  ],
+  "patch_hunks": [
+    {
+      "model": "research_export",
+      "fixture": "PHI_EXPORT_PATH",
+      "description": "Remove the direct identifier research_export.patient_id from the export select list.",
+      "before": "select\n    registry_case_id,\n    patient_id,   -- direct identifier retained\n    ed_arrival_datetime,\n    ...",
+      "after": "select\n    registry_case_id,\n    ed_arrival_datetime,\n    ..."
+    },
+    {
+      "model": "trauma_registry",
+      "fixture": "MISSINGNESS_COLLAPSE",
+      "description": "Carry the paired gcs_total_missingness state column through instead of dropping it.",
+      "before": "case when gcs_total_missingness in (...) then null else gcs_total end as gcs_total,\n-- gcs_total_missingness not selected",
+      "after": "gcs_total,\ngcs_total_missingness,"
+    },
+    {
+      "model": "ml_feature_table",
+      "fixture": "UNVALIDATED_ML_SOURCE",
+      "description": "Derive ml_feature_table.raw_mode_of_arrival_feature from the validated registry rather than the raw source.",
+      "before": "..., raw_mode_of_arrival_feature\n-- left join stg_ed_documentation (unvalidated) as the feature source",
+      "after": "-- feature dropped, or re-derived via trauma_registry"
+    },
+    {
+      "model": "dashboard_report",
+      "fixture": "STALE_REFERENCE",
+      "description": "Use the post-rename ed_arrival_datetime name instead of the stale arrival_time.",
+      "before": "max(ed_arrival_datetime) as arrival_time",
+      "after": "max(ed_arrival_datetime) as ed_arrival_datetime"
+    }
+  ],
+  "impact_report_markdown": "# Migration impact report (draft)\n\nThe migration renamed the encounter timestamp arrival_time -> ed_arrival_datetime in trauma_registry. The faulty state carries the governance findings below.\n\n## Affected downstream datasets/columns\n- dashboard_report.arrival_time \u2014 carries the renamed encounter timestamp\n- dq_metrics.ed_arrival_datetime \u2014 carries the renamed encounter timestamp\n- ml_feature_table.ed_arrival_datetime \u2014 carries the renamed encounter timestamp\n- research_export.ed_arrival_datetime \u2014 carries the renamed encounter timestamp\n- dashboard_report.arrival_time \u2014 stale reference: dashboard_report.arrival_time persists after trauma_registry renamed it to ed_arrival_datetime\n\n## Findings\n\n- **PHI_EXPORT_PATH** (export_governance): Direct identifier research_export.patient_id is retained in a research export (must be excluded).\n- **MISSINGNESS_COLLAPSE** (completeness): Explicit-missingness contract on gcs_total collapsed: trauma_registry keeps gcs_total but dropped the paired gcs_total_missingness carried by stg_ed_documentation.\n- **UNVALIDATED_ML_SOURCE** (readiness): ML feature ml_feature_table.raw_mode_of_arrival_feature is derived directly from the unvalidated source stg_ed_documentation, bypassing the validated registry.\n\n## Proposed remediation\n\n- research_export [PHI_EXPORT_PATH]: Remove the direct identifier research_export.patient_id from the export select list.\n- trauma_registry [MISSINGNESS_COLLAPSE]: Carry the paired gcs_total_missingness state column through instead of dropping it.\n- ml_feature_table [UNVALIDATED_ML_SOURCE]: Derive ml_feature_table.raw_mode_of_arrival_feature from the validated registry rather than the raw source.\n- dashboard_report [STALE_REFERENCE]: Use the post-rename ed_arrival_datetime name instead of the stale arrival_time."
+}
