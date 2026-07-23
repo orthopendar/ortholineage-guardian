@@ -1,0 +1,13 @@
+# Build artifacts and local state — never committed
+*.duckdb
+*.duckdb.wal
+target/
+dbt_packages/
+logs/
+__pycache__/
+*.pyc
+.venv/
+.uv/
+
+# dbt user-local
+.user.yml
