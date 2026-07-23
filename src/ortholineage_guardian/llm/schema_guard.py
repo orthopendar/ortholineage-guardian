@@ -91,6 +91,22 @@ BASE_KNOWN = _base_known_entities()
 _IDENT = r"[a-z][a-z0-9_]*"
 _DOTTED_RE = re.compile(rf"\b({_IDENT})\.({_IDENT})\b")
 
+# Latin abbreviations (and their bare letters) that are prose, not entity references.
+# This fixes the "e.g." / "i.e." false positive WITHOUT relaxing the whitelist: a genuine
+# dotted reference (either side a real snake_case name) is still tokenized and checked, so a
+# fabricated table like billing_warehouse.patient_id or phantom_export.patient_ssn is still
+# rejected. We only change what COUNTS as an entity reference, never what is ALLOWED.
+_LATIN_STOPWORDS = {"e", "g", "i", "ie", "eg", "etc", "vs", "cf", "al", "et", "ea", "viz"}
+
+
+def _is_prose_dotted(a: str, b: str) -> bool:
+    if a in _LATIN_STOPWORDS or b in _LATIN_STOPWORDS:
+        return True
+    # "e.g" / "i.e" / any two-letter.two-letter latin form — never a real dataset.column
+    if len(a) <= 2 and len(b) <= 2:
+        return True
+    return False
+
 # CONTRACT-KNOWLEDGE guard: assertions that imply the system inspected row data.
 _ROW_COUNT_RE = re.compile(
     r"\b\d+\s+(rows?|records?|cases?|patients?|values?|nulls?|entries)\b", re.IGNORECASE
@@ -130,13 +146,17 @@ def _whitelist_for(findings: list[Finding]) -> set[str]:
 
 
 def _scan_entities(text: str) -> set[str]:
-    """Extract entity-shaped tokens from prose: both sides of any dotted ref, plus any bare
-    token that is a known dataset/term (so an invented bare dataset in `affected_entities`
-    is caught by the field check, and invented dotted refs are caught here)."""
+    """Extract entity-shaped tokens from prose: both sides of any dotted `dataset.column`
+    reference. Latin abbreviations (`e.g.`, `i.e.`, ...) and two-letter forms are treated as
+    prose, not entity references, so they are never checked against the whitelist. Every
+    other dotted reference is still tokenized and checked — fabricated tables are rejected."""
     found: set[str] = set()
     for m in _DOTTED_RE.finditer(text):
-        found.add(m.group(1))
-        found.add(m.group(2))
+        a, b = m.group(1), m.group(2)
+        if _is_prose_dotted(a, b):
+            continue
+        found.add(a)
+        found.add(b)
     return found
 
 

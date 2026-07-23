@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -45,7 +46,12 @@ class McpClient:
         params = StdioServerParameters(
             command="uvx", args=["mcp-server-datahub@latest"], env=env
         )
-        self._stdio_cm = stdio_client(params)
+        # The MCP server logs its GraphQL queries to stderr. Keep the demo terminal clean by
+        # routing that to devnull unless GUARDIAN_MCP_DEBUG is set (then it goes to stderr).
+        self._errlog = (
+            sys.stderr if os.environ.get("GUARDIAN_MCP_DEBUG") else open(os.devnull, "w")
+        )
+        self._stdio_cm = stdio_client(params, errlog=self._errlog)
         read, write = await self._stdio_cm.__aenter__()
         self._session_cm = ClientSession(read, write)
         self._session = await self._session_cm.__aenter__()
@@ -57,6 +63,8 @@ class McpClient:
             await self._session_cm.__aexit__(*exc)
         if self._stdio_cm is not None:
             await self._stdio_cm.__aexit__(*exc)
+        if getattr(self, "_errlog", None) is not None and self._errlog is not sys.stderr:
+            self._errlog.close()
 
     async def _call(self, name: str, args: dict) -> dict:
         result = await self._session.call_tool(name, args)

@@ -321,8 +321,45 @@ stack or a key; regenerate them with `uv run python scripts/generate_goldens.py`
 tests: `tests/test_schema_guard.py` (malformed / hallucinated-entity / claimed-observation
 rejections, mocked — no network), `tests/test_no_llm_fallback.py`, `tests/test_golden_stability.py`.
 
-Rendering the patch + impact report to `examples/` and writing findings back into DataHub
-are Batch 6.
+### Remediation artifacts + controlled write-back (Batch 6) — the closed loop
+
+The agent renders **PR-ready artifacts** from the validated findings and performs
+**controlled write-back** into DataHub, closing the loop **detect → remediate → write back**.
+
+Generated artifacts (deterministic — no timestamps, diff-reviewable), in
+[`examples/`](examples/):
+
+- [`examples/remediation/remediation.patch`](examples/remediation/remediation.patch) — a
+  **real, `git apply`-able** dbt patch fixing all four fixtures (drop `patient_id` from the
+  export, restore the paired `gcs_total_missingness` column, repoint the ML feature to the
+  validated registry, rename the stale `arrival_time`). Verified with `git apply --check`.
+- [`examples/reports/migration_impact_report.md`](examples/reports/migration_impact_report.md)
+  — the rename, the lineage-traversed affected datasets/columns, the three findings with
+  evidence, and the stale-reference observation.
+- [`examples/findings/findings.json`](examples/findings/findings.json) — machine-readable findings.
+
+Write-back is **application code, never LLM-driven**, **dry-run by default**, and
+**idempotent**. Per the frozen contract (`docs/BATCH2_CAPABILITY_MATRIX.md`): a
+governance-finding **tag** + an editable **description** (Required tier) and a DataHub
+**incident** (Preferred tier) on each affected dataset. Baseline (0 findings) writes nothing.
+
+**One-command closed-loop demo:**
+
+```bash
+export DATAHUB_GMS_URL=http://localhost:8090
+bash scripts/datahub_up.sh                                                   # 1. DataHub
+bash scripts/ingest_all.sh                                                   # 2. build + ingest + emit both namespaces
+uv run --with mcp python scripts/run_policy_engine.py --namespace faulty      # 3. detect (3 findings)
+uv run --with mcp python scripts/generate_remediation.py --namespace faulty   # 4. explain + draft (LLM if key, else template)
+uv run --with mcp python scripts/render_artifacts.py --namespace faulty        # 5. render examples/
+uv run --with mcp --with 'acryl-datahub[datahub-rest]' python scripts/writeback.py --namespace faulty            # 6. dry-run (writes nothing)
+uv run --with mcp --with 'acryl-datahub[datahub-rest]' python scripts/writeback.py --namespace faulty --apply    # 7. write tag + description + incident
+uv run --with mcp python scripts/writeback_verify.py --namespace faulty --expect present   # 8. read back through MCP
+uv run --with 'acryl-datahub[datahub-rest]' python scripts/writeback_reset.py --namespace faulty                 # 9. clean the graph for re-recording
+```
+
+Tests: `tests/test_artifacts.py` (the patch applies + golden-stable) and
+`tests/test_writeback.py` (dry-run plan, baseline-zero, validated-only) — offline.
 
 ---
 

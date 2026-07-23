@@ -51,6 +51,24 @@ def test_hallucinated_entity_rejected():
         validate_explanation(bad, PHI)
 
 
+def test_latin_abbreviations_accepted_but_unknown_entity_still_rejected():
+    # regression for the live-LLM false positive: "e.g." was atomized into 'e'/'g' and
+    # rejected. Prose latin abbreviations must be ACCEPTED; a genuine unknown entity must
+    # still be REJECTED — the whitelist is unchanged, only the tokenizer is fixed.
+    ok = _valid_explanation_dict()
+    ok["why_it_matters"] = (
+        "A de-identified export must exclude direct identifiers (e.g. patient_id) so that "
+        "consumers, i.e. downstream analysts, never handle one."
+    )
+    exp = validate_explanation(ok, PHI)  # must NOT raise
+    assert exp.check == "PHI_EXPORT_PATH"
+
+    bad = _valid_explanation_dict()
+    bad["why_it_matters"] = "The identifier also reaches billing_warehouse.patient_id."
+    with pytest.raises(GuardRejection, match="entity-whitelist violation"):
+        validate_explanation(bad, PHI)
+
+
 def test_hallucinated_entity_in_affected_list_rejected():
     bad = _valid_explanation_dict()
     bad["affected_entities"] = ["research_export", "billing_warehouse"]
