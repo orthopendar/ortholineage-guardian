@@ -151,6 +151,44 @@ them is exactly the Batch-3 emitter's job.
 | 3 | Write tag | Python SDK | ✅ **PROVEN** | tag written + read back + removed |
 | 4 | Write description | Python SDK | ✅ **PROVEN** | editable description written + read back + cleared |
 | 5 | Create incident / assertion | Python SDK | ✅ **PROVEN** | incident created + read back `ACTIVE` + hard-deleted |
+| 6 | Glossary term: create + attach to dataset AND column | Python SDK / MCP | ✅ **PROVEN** (with a caveat) | term created; dataset attach MCP-readable; **column attach MCP-readable only via `editableSchemaMetadata` → `editedGlossaryTerms`** (schemaField-entity attach is not surfaced by MCP) |
+| 7 | Structured property: define + apply to dataset AND column | Python SDK / MCP | ⚠️ **DATASET only** | dataset apply MCP-readable via `get_entities.structuredProperties`; **column apply is NOT returned by MCP `list_schema_fields`** — unusable for the checks |
+
+### Rows 6–7 — glossary terms & structured properties (Batch-3 spike)
+
+The Batch-3 emitter needs COLUMN-level clinical signals that the MCP read path returns.
+The spike wrote a glossary term, a structured property, and a tag to both a dataset and a
+column (`dashboard_report.case_count`), then read them back through MCP.
+
+**Result — MCP readability by representation × granularity:**
+
+| Representation | Dataset (MCP `get_entities`) | Column (MCP `list_schema_fields`) |
+|---|---|---|
+| Glossary term | ✅ `glossaryTerms` | ✅ `editedGlossaryTerms` *(only via `editableSchemaMetadata`)* |
+| Structured property | ✅ `structuredProperties` | ❌ not returned |
+| Tag | ✅ | ❌ not returned |
+
+**Column readback proof** (`editableSchemaMetadata` path):
+
+```json
+{"fieldPath": "case_count", "nativeDataType": "BIGINT", ..., "editedGlossaryTerms": ["SpikeTerm"]}
+```
+
+Writing the term/property/tag to the **schemaField entity** (`urn:li:schemaField:(...)`)
+did NOT surface in the MCP field view; only `editableSchemaMetadata` did.
+
+**Representation chosen (frozen in `docs/METADATA_CONTRACT.md`):**
+
+- **Column-level signals → glossary terms** via `editableSchemaMetadata`
+  (sensitivity, clinical_semantic, missingness_contract). The only MCP-readable column
+  option.
+- **Dataset-level facts → structured properties** (validation_status, data_product,
+  deidentification_required), **plus a dataset glossary term** for the semantic class
+  (UnvalidatedSource / ValidatedSource / ResearchExport).
+
+The pre-authorized namespaced-tag fallback was **not needed** — glossary terms are both
+writable and MCP-readable at column granularity. All spike artifacts were cleaned up
+(dataset aspects emptied; scratch term/property/schemaField hard-deleted; verified empty).
 
 ### Row 1 — read lineage via MCP (`scripts/mcp_smoke.py`)
 

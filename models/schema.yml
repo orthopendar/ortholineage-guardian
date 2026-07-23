@@ -9,9 +9,9 @@ version: 2
 # translates them into DataHub tags / structured properties / glossary terms; the policy
 # engine then reads ONLY those metadata signals (never this SQL).
 #
-# OWNERSHIP: each model declares an owner identifier below. How the installed dbt
-# ingestion maps these schema.yml owner identifiers onto DataHub ownership is
-# VERIFY-IN-BATCH-2 — proven there, not assumed here.
+# OWNERSHIP: each model declares an owner identifier below. Batch 2 PROVED the mapping:
+# these `config.meta.owner` identifiers surface in DataHub as CorpUser owners
+# (urn:li:corpuser:<owner>) with ownership type DATAOWNER. See docs/BATCH2_CAPABILITY_MATRIX.md.
 #
 # Paired-column guarantee: every column tagged `missingness_contract: explicit`
 # (gcs_total, mechanism_category) has a paired `<field>_missingness` state column in its
