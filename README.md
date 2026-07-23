@@ -1,58 +1,245 @@
 # OrthoLineage Guardian
 
-A clinically informed **data-governance agent** for orthopaedic-trauma registry
-pipelines. It uses data lineage to detect healthcare-specific data-contract violations,
-generate mergeable remediation, and preserve findings in the metadata graph. Lineage is
-the substrate; the value is the clinical policy layer and the closed loop
-(**detect → remediate → write back**).
+[![CI](https://github.com/orthopendar/ortholineage-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/orthopendar/ortholineage-guardian/actions/workflows/ci.yml)
+&nbsp;License: Apache-2.0
 
-> **Status: governance-only, synthetic-data project.** This system governs metadata,
-> provenance, and data quality. It never emits diagnosis, treatment, triage, or any
-> clinical recommendation. All data in this repository is **synthetic, seeded,
-> deterministic, and PHI-free**.
+**OrthoLineage Guardian is a clinically informed, governance-only agent that reads
+DataHub lineage and metadata to catch healthcare-specific data-contract violations that a
+generic data-quality tool would miss.** It detects three trauma-registry governance
+defects and a stale migration reference purely from the metadata graph, drafts a
+PR-ready dbt patch and impact report to fix them, and writes its findings back into
+DataHub as tags, descriptions, and incidents. The whole loop — **detect → remediate →
+write back** — runs from one `guardian` CLI over a synthetic, PHI-free pipeline.
 
-This repository is being built in batches. **Batch 1 (this content)** delivers the
-synthetic dbt + DuckDB pipeline: a six-model tree with two scenarios (`baseline` and
-`faulty`), four planted governance fixtures, and a test suite that proves the scenario
-difference. Later batches add DataHub ingestion, the clinical metadata emitter, the
-deterministic policy engine, LLM-drafted remediation, and controlled write-back.
+> **Governance-only, synthetic data.** This system governs metadata, provenance, and data
+> quality. It **never** emits diagnosis, treatment, triage, or any clinical
+> recommendation. Every row in this repository is **synthetic, seeded, deterministic, and
+> PHI-free**.
 
 ---
 
-## Invariants
+## Safety: the authority split
 
-These bind every batch of this project.
+The claim that makes this safe to run against real governance metadata is that **a
+language model never decides anything.**
 
-- **GOVERNANCE-ONLY.** The agent governs metadata, provenance, and data quality. It
-  NEVER emits diagnosis, treatment, triage, or clinical recommendation. All data is
-  SYNTHETIC and PHI-free.
-- **IP WALL-OFF.** `ortholineage-guardian` is a NEW public Apache-2.0 repo. NEVER copy
-  source, file paths, protocol-pack YAML, or the CDS-firewall / two-lane authority
-  *implementation* from any private predecessor codebase into it. Any private
-  predecessor was read ONLY to abstract domain patterns. Apache-2.0 is irrevocable
-  public disclosure — patentable firewall / two-lane internals are OFF-LIMITS for
-  transplant.
-- **AUTHORITY SPLIT (public-safe analogue, derived fresh).** Deterministic code decides
-  whether a violation exists; the LLM only explains and drafts remediation,
-  schema-validated; write-back is performed by validated application code, never by the
-  model.
-- **DETECTION PROVENANCE.** The policy engine detects violations EXCLUSIVELY from
-  DataHub metadata signals (tags, properties, lineage, schema aspects) — NEVER by
-  reading the dbt SQL where defects are planted. If a check can only pass by reading
-  source code, the metadata model is incomplete: fix the emitter, not the check.
-- **SCENARIO INTEGRITY.** One model tree; scenario switched by a deterministic dbt var.
-  `baseline` is clean (the false-positive test bed); `faulty` carries exactly the four
-  documented planted fixtures. Every defect is annotated in-code
-  `-- PLANTED DEFECT: <id>`; zero defects exist in baseline (proven by tests).
-- **NEW-WORK.** Everything in this repo is built fresh within the submission window.
+> Deterministic code decides whether a violation exists. The LLM never decides — it turns
+> a deterministic, lineage-grounded finding into a readable explanation and a *draft*
+> remediation, which is schema-validated before any of it is written anywhere. Write-back
+> is performed by validated application code, not by the model.
+
+Three consequences follow, and each is enforced in code and tested:
+
+- **Detection provenance.** The policy engine reads *only* DataHub metadata signals (tags,
+  glossary terms, structured properties, lineage, schema aspects). It never opens the dbt
+  SQL, the manifest, `catalog.json`, or a DuckDB file — enforced by a test with a CPython
+  audit hook (`tests/test_detection_provenance.py`).
+- **No hallucinated entities.** Every dataset, column, or term the LLM names must trace
+  back to the finding's evidence or the frozen metadata contract; anything else is
+  rejected and the output falls back to a deterministic template
+  (`tests/test_schema_guard.py`).
+- **Human-in-the-loop write-back.** Generated artifacts are *proposals* for human review.
+  Write-back is application code, **dry-run by default**, idempotent, and reversible.
+
+---
+
+## 60-second quickstart (no Docker, no API key)
+
+Requires Python 3.11 and [`uv`](https://docs.astral.sh/uv/). This builds the synthetic
+pipeline, runs the full offline test suite (including the headline zero-false-positive
+proof), and leaves the committed remediation artifacts inspectable — all with no DataHub
+and no API key.
+
+```bash
+git clone https://github.com/orthopendar/ortholineage-guardian.git
+cd ortholineage-guardian
+
+uv sync                 # install the pinned toolchain from uv.lock
+bash scripts/build.sh   # build baseline + faulty, run the offline test suite, generate docs
+```
+
+Then read the PR-ready artifacts the agent generated, already committed for inspection:
+
+- [`examples/remediation/remediation.patch`](examples/remediation/remediation.patch) — a real, `git apply`-able dbt patch that fixes all four defects
+- [`examples/reports/migration_impact_report.md`](examples/reports/migration_impact_report.md) — the migration-impact report
+- [`examples/findings/findings.json`](examples/findings/findings.json) — the machine-readable findings
+
+To watch the closed loop run live against DataHub, do the **hero demo** below.
+
+---
+
+## The hero demo (the closed loop, against DataHub)
+
+One migration renames `arrival_time → ed_arrival_datetime`. The migration is faulty: the
+`faulty` world carries exactly **three governance defects plus one stale reference**. The
+agent traverses lineage from the changed field, names every affected dataset and column,
+fires the three deterministic checks, drafts the remediation, and writes findings back.
+
+Requires **Docker** (for the DataHub OSS quickstart) and `uv`. Everything is driven by the
+unified `guardian` CLI. Activate the project venv once so the `guardian` command is on your
+PATH (or prefix any command with `uv run`, e.g. `uv run guardian scan`):
+
+```bash
+uv sync                        # if you haven't already
+source .venv/bin/activate      # puts `guardian` on PATH
+export DATAHUB_GMS_URL=http://localhost:8090
+
+guardian up        # start DataHub (docker quickstart; GMS on host port 8090)
+guardian ingest    # build + ingest + emit clinical metadata for BOTH namespaces
+```
+
+`guardian up` / `ingest` are the one-time (slow) setup. Then run the hero path — either
+one stage at a time, or all at once with the filming-ordered demo script:
+
+```bash
+bash scripts/demo.sh                  # the full loop, straight through
+DEMO_PAUSE=1 bash scripts/demo.sh     # pause between stages for a narrator
+```
+
+`scripts/demo.sh` runs exactly these six stages (each is also a standalone `guardian`
+subcommand you can run yourself):
+
+| # | Command | Expected result |
+|---|---|---|
+| 1 | `guardian scan --namespace faulty` | **3 findings** (`PHI_EXPORT_PATH`, `MISSINGNESS_COLLAPSE`, `UNVALIDATED_ML_SOURCE`) + a stale-`arrival_time` observation |
+| 2 | `guardian artifacts --namespace faulty` | writes the patch + impact report + findings.json into `examples/` |
+| 3 | `guardian writeback --namespace faulty --apply` | writes a governance **tag** + editable **description** + **incident** to each affected dataset |
+| 4 | `guardian verify --namespace faulty --expect present` | reads all three back **through MCP**, exits 0 |
+| 5 | `guardian scan --namespace baseline` | **0 findings** — zero false positives on the clean world |
+| 6 | `guardian reset --namespace faulty` | removes everything the guardian wrote; graph clean again |
+
+`guardian writeback` without `--apply` is a **dry-run** — it prints the exact plan and
+writes nothing. When finished, tear down with `guardian down` (or `guardian down --nuke`
+to wipe the metadata volumes).
+
+The DataHub UI is at **http://localhost:9002** (default login `datahub` / `datahub`), where
+the written-back tags, descriptions, and incidents are visible on each dataset.
+
+---
+
+## What makes this non-native to DataHub
+
+DataHub gives you lineage and a metadata graph. It does **not** know what a trauma registry
+means. The value here is the clinical governance layer on top — three checks that read the
+graph and decide, plus the closed loop that acts on the decision.
+
+Each check reads **only** metadata signals (never SQL), and each maps to a real
+clinical-governance rule class:
+
+| Check | Fires when | Rule class |
+|---|---|---|
+| `PHI_EXPORT_PATH` | a `DirectIdentifier` column has column-level lineage into a dataset marked `data_product = research_export` | export-governance |
+| `MISSINGNESS_COLLAPSE` | an `ExplicitMissingness` value column survives downstream but its paired `<field>_missingness` state column was dropped — collapsing ≥2 distinct governed states into a bare `NULL` | completeness |
+| `UNVALIDATED_ML_SOURCE` | an `ml_feature_table` feature is sourced *directly* from a dataset marked `validation_status = unvalidated`, bypassing the validated registry | readiness |
+
+The stale-`arrival_time` reference is reported as a migration-drift **observation** from
+the impact traversal — surfaced alongside the findings, not counted as one of the three
+checks.
+
+**The closed loop** is the differentiator: the agent doesn't just report. It drafts a
+mergeable dbt patch (verified `git apply`-able) and an impact report into `examples/`, then
+writes its findings back into the graph so the governance state lives where the data does.
+
+---
+
+## The metadata contract, in brief
+
+The dbt ingestion alone doesn't carry clinical meaning, so a custom **emitter** promotes
+governance `meta` keys into first-class, MCP-readable DataHub signals. The policy engine
+reads these — nothing else. The full frozen mapping is
+[`docs/METADATA_CONTRACT.md`](docs/METADATA_CONTRACT.md); in brief:
+
+- **Column glossary terms** — `DirectIdentifier`, `QuasiIdentifier`, `EncounterTimestamp`,
+  `ExplicitMissingness` (attached at the column level via editable schema metadata).
+- **Dataset structured properties** — `guardian_validation_status`,
+  `guardian_data_product`, `guardian_deidentification_required`.
+- **Lineage** — table- and column-level, from dbt `ref()` and named-column `SELECT`s.
+
+The emitter is idempotent (re-running yields byte-identical aspects), uses no LLM, and
+writes through the validated SDK. `docs/METADATA_CONTRACT.md` is the contract the engine
+reads; if a check could only fire by reading SQL, the fix is to add a signal to the
+emitter — never to read source in the check.
+
+---
+
+## Verify the claims yourself
+
+Every headline claim is independently checkable:
+
+- **Zero false positives on baseline.** Both scenarios are ingested under distinct URN
+  namespaces (`faulty` → env `PROD`, `baseline` → env `DEV`), both carry the full clinical
+  contract, and the engine finds **3** on faulty and **0** on baseline:
+  ```bash
+  guardian scan --namespace faulty     # 3 findings
+  guardian scan --namespace baseline   # 0 findings
+  ```
+  Proven offline too: `tests/test_policy_baseline_zero_fp.py`.
+- **The engine reads no source.** `tests/test_detection_provenance.py` installs a CPython
+  audit hook and asserts the engine opens no `.sql`, manifest, `catalog.json`, or `.duckdb`.
+- **The patch really applies.** `tests/test_artifacts.py` runs `git apply --check` on the
+  generated patch and asserts every planted defect appears only on removed lines.
+- **The LLM can't hallucinate entities.** `tests/test_schema_guard.py` feeds malformed,
+  hallucinated-entity, and claimed-observation outputs and asserts each is rejected.
+
+Run the offline suite (no Docker, no key) any time:
+
+```bash
+uv run pytest -q
+```
+
+This is exactly what CI runs on every push and PR — see the badge at the top.
+
+---
+
+## The LLM is optional (and never decides)
+
+The LLM only improves the prose of explanations and remediation drafts. **It is never
+required for correctness.** With no `ANTHROPIC_API_KEY` present — or with `--no-llm` — the
+same validated objects render deterministically from templates, so a judge with no key
+still gets a complete, useful artifact. When a key *is* present, the model's output is
+schema-validated (entity whitelist + no-claimed-observations guard) before use, and a
+rejected output silently falls back to the template. It never mutates the graph; write-back
+is application code.
+
+Set `ANTHROPIC_API_KEY` (and optionally `GUARDIAN_MODEL`, default `claude-opus-4-8`) in a
+`.env` to enable it — see [`.env.example`](.env.example). Committed golden artifacts
+([`tests/golden/`](tests/golden/)) make the template output inspectable without a stack or
+a key.
+
+---
+
+## Honest simplifications
+
+This is a synthetic teaching model. Three deliberate simplifications, each preserving the
+governance semantic the checks depend on:
+
+1. **Synthetic direct identifiers.** The seed carries raw `patient_id` /
+   `medical_record_number`, and `PHI_EXPORT_PATH` demonstrates a raw identifier surviving
+   into an export. A production registry would isolate direct PHI behind a vault pointer and
+   never store it in registry tables; the raw-identifier-in-export failure is used here
+   because it is universally legible and needs no vault architecture. The encounter
+   timestamp (`arrival_time` / `ed_arrival_datetime`) is a **quasi-identifier**, never a
+   direct identifier.
+2. **Five-token missingness vocabulary.** Clinical fields that can be legitimately absent
+   store an explicit state in a paired `<field>_missingness` column, not a bare `NULL`.
+   This project freezes a compact set — `PRESENT | NOT_DOCUMENTED | NOT_ASSESSED |
+   NOT_APPLICABLE | UNKNOWN` — a defensible synthesis of the richer two-axis vocabulary a
+   production registry uses. The load-bearing semantic is preserved: an explicit governed
+   reason is a *dispositioned* state, whereas a bare null on an expected field is the *only*
+   blocking one. Collapsing two distinct explicit states into one downstream `NULL` is what
+   `MISSINGNESS_COLLAPSE` violates.
+3. **Binary validation status.** Real data maturity is a ladder (draft → verified, with
+   evidence gates). This model simplifies it to `validated | unvalidated`, which is all
+   `UNVALIDATED_ML_SOURCE` needs.
 
 ---
 
 ## The pipeline
 
 One dbt model tree, six models, one raw seed source. The hero migration renames
-`arrival_time → ed_arrival_datetime`; that rename lands in `trauma_registry` under
-**both** scenarios.
+`arrival_time → ed_arrival_datetime`; that rename lands in `trauma_registry` under **both**
+scenarios. Every path carrying the timestamp or an identifier uses **named-column
+`SELECT`s** so column-level lineage is traceable.
 
 ```
 stg_ed_documentation      (staging  · raw, "unvalidated" source)
@@ -71,49 +258,17 @@ ml_feature_table          (ml      · features for downstream models)
 dashboard_report          (report  · summary surface)
 ```
 
-Every path that carries the timestamp or an identifier uses **named-column `SELECT`s**
-(no `SELECT *` on those chains) so that column-level lineage is traceable downstream.
-
-### Scenarios
-
-There is exactly one model tree. The scenario is chosen at run time with a dbt var; the
-two scenarios differ ONLY at the four planted-defect sites, each guarded by a
+There is exactly one model tree; the scenario is chosen at run time with a dbt var. The two
+scenarios differ **only** at the four planted-defect sites, each guarded by a
 `{% if var('scenario') == 'faulty' %}` conditional and annotated `-- PLANTED DEFECT:`.
+`baseline` is clean (the false-positive test bed); `faulty` carries exactly:
 
-- **`baseline`** — clean. No governance defects. This is the false-positive test bed.
-- **`faulty`** — carries exactly four documented defects (three governance defects plus
-  one stale reference):
-
-  | Fixture ID | Model | What `faulty` does |
-  |---|---|---|
-  | `PHI_EXPORT_PATH` | `research_export` | retains the direct identifier `patient_id` in the export select list |
-  | `MISSINGNESS_COLLAPSE` | `trauma_registry` | collapses ≥2 distinct explicit missingness states (`NOT_DOCUMENTED`, `NOT_ASSESSED`) into SQL `NULL` **and drops the paired `_missingness` state column** |
-  | `UNVALIDATED_ML_SOURCE` | `ml_feature_table` | derives at least one feature directly from `stg_ed_documentation` (the raw, unvalidated source), bypassing `trauma_registry` |
-  | `STALE_REFERENCE` | `dashboard_report` | still references the pre-rename `arrival_time` name after `trauma_registry` renamed it to `ed_arrival_datetime` |
-
----
-
-## Quickstart
-
-Requires Python 3.11 and [`uv`](https://docs.astral.sh/uv/).
-
-```bash
-# 1. Install the pinned toolchain (creates .venv from pyproject.toml + uv.lock)
-uv sync
-
-# 2. Build + test both scenarios and generate docs on the faulty state
-bash scripts/build.sh
-```
-
-`scripts/build.sh` runs the full flow end to end:
-
-1. build `baseline` → test `baseline` (dbt tests + pytest) → **zero defects**;
-2. build `faulty` → test `faulty` (dbt tests + pytest) → **exactly the four fixtures**;
-3. `dbt docs generate` on `faulty`, producing `target/manifest.json` and
-   `target/catalog.json` (the metadata a later batch ingests into DataHub).
-
-Each scenario builds into its **own** DuckDB file (`baseline.duckdb`, `faulty.duckdb`)
-so the two states never share a database.
+| Fixture ID | Model | What `faulty` does |
+|---|---|---|
+| `PHI_EXPORT_PATH` | `research_export` | retains the direct identifier `patient_id` in the export select list |
+| `MISSINGNESS_COLLAPSE` | `trauma_registry` | collapses `NOT_DOCUMENTED` / `NOT_ASSESSED` into SQL `NULL` and drops the paired `_missingness` state column |
+| `UNVALIDATED_ML_SOURCE` | `ml_feature_table` | derives a feature directly from `stg_ed_documentation` (raw, unvalidated), bypassing `trauma_registry` |
+| `STALE_REFERENCE` | `dashboard_report` | still references the pre-rename `arrival_time` after `trauma_registry` renamed it |
 
 To run a single scenario manually:
 
@@ -124,269 +279,67 @@ uv run dbt build --vars '{scenario: faulty}'   --target faulty
 
 ---
 
-## Data-model notes (honest simplifications)
+## The `guardian` CLI
 
-This synthetic model deliberately simplifies two things relative to a production trauma
-registry. Both simplifications are documented here so the design is honest; neither
-changes the governance semantics the checks depend on.
+`guardian` is a thin façade over the scripts in `scripts/`; each subcommand shells out with
+the dependency context that step needs and prints one line describing what it does.
 
-### 1. Missingness controlled vocabulary
-
-Clinical fields that can be legitimately absent do not store a bare SQL `NULL`; they
-store an **explicit missingness state** in a paired `<field>_missingness` column
-alongside the value column. This project freezes a compact **five-token** vocabulary:
-
-```
-PRESENT | NOT_DOCUMENTED | NOT_ASSESSED | NOT_APPLICABLE | UNKNOWN
-```
-
-with these meanings:
-
-| Token | Meaning |
+| Command | What it does |
 |---|---|
-| `PRESENT` | the value is documented and valid |
-| `NOT_DOCUMENTED` | the item was not documented |
-| `NOT_ASSESSED` | a clinician documented that the item was **not assessed** (distinct from simply not documented) |
-| `NOT_APPLICABLE` | the item does not apply to this case |
-| `UNKNOWN` | genuinely unknown |
+| `guardian up` | start DataHub (docker quickstart, GMS on :8090) |
+| `guardian ingest` | build + ingest + emit clinical metadata for both namespaces |
+| `guardian scan [--namespace]` | run the deterministic policy engine (metadata only) |
+| `guardian artifacts [--namespace]` | render PR-ready artifacts into `examples/` |
+| `guardian writeback [--namespace] [--apply]` | controlled write-back (dry-run unless `--apply`) |
+| `guardian verify [--namespace] [--expect present\|clean]` | read the write-back back through MCP |
+| `guardian reset [--namespace]` | remove everything the guardian wrote |
+| `guardian down [--nuke]` | stop DataHub |
 
-A production registry typically splits explicit missingness across two governed axes (a
-richer *missingness-state* axis and a separate *documentation-status* axis). The
-five-token set here is a deliberate, defensible **synthesis** of those two axes, small
-enough for a demo while preserving the load-bearing semantic: **an explicit governed
-reason is a dispositioned (answered) state, whereas a bare null on an expected field is
-the only blocking state.** Collapsing two distinct explicit states into one downstream
-`NULL` is exactly what the `MISSINGNESS_COLLAPSE` fixture violates.
-
-**Paired-column guarantee.** Every value column governed by an explicit missingness
-contract (`gcs_total`, `mechanism_category`) is stored as a value column **plus** a
-dedicated `<field>_missingness` state column, and that pairing is carried through every
-baseline downstream model that carries the value. In `faulty`, the
-`MISSINGNESS_COLLAPSE` defect both nulls the collapsed values **and drops the paired
-`_missingness` state column** downstream — a schema-shape difference that a
-metadata-only policy engine can detect without reading any SQL.
-
-### 2. Direct-identifier realism
-
-The seed carries raw `patient_id` and `medical_record_number` columns, and the
-`PHI_EXPORT_PATH` fixture demonstrates a raw identifier surviving into a research export.
-
-In a production architecture, raw direct identifiers are typically **never** stored in
-registry tables at all — direct PHI is isolated behind a vault pointer and write APIs
-reject direct identifiers outright — so a literal "identifier retained in export" is not
-how such a system actually fails. For this synthetic teaching demo we deliberately use
-the simpler, universally legible failure mode (a raw identifier surviving into an
-export) because it is pedagogically clearer than a vault-pointer leak and needs no
-vault architecture. This is a synthetic simplification, not a model of any real system.
-
-For this project, the **only** direct identifiers are `patient_id` and
-`medical_record_number`. The encounter timestamp (`arrival_time` /
-`ed_arrival_datetime`) is a **quasi-identifier**, never a direct identifier.
+`--namespace` is `faulty` (default) or `baseline`. Run `guardian <command> --help` for
+details.
 
 ---
 
-## Run DataHub locally (Batch 2)
-
-Batch 2 stands up DataHub OSS via the official quickstart, ingests the **faulty** dbt
-state (with real table- and column-level lineage), and proves the read + write metadata
-primitives. Requires **Docker** and the [`uv`](https://docs.astral.sh/uv/) toolchain.
-
-The DataHub CLI is installed as an **isolated `uv` tool** so it never touches this dbt
-project's environment:
-
-```bash
-uv tool install --python 3.11 'acryl-datahub[dbt]'
-```
-
-Bring DataHub up, build + ingest the faulty state, and prove the MCP read path:
-
-```bash
-# 1. Start DataHub. GMS is published on host port 8090 (remapped off the default 8080,
-#    which is commonly taken; override with DATAHUB_MAPPED_GMS_PORT).
-bash scripts/datahub_up.sh
-export DATAHUB_GMS_URL=http://localhost:8090        # see .env.example
-
-# 2. Build the faulty dbt artifacts, then ingest them into DataHub.
-bash scripts/build.sh
-uv tool run --python 3.11 --from 'acryl-datahub[dbt]' datahub ingest -c ingest/dbt_source.yml
-
-# 3. Smoke-test the DataHub MCP read path (lineage + schema/properties).
-uv run --with mcp python scripts/mcp_smoke.py
-
-# 4. Emit the clinical governance metadata (Batch 3), then verify every signal is
-#    readable back through the MCP path at the correct granularity.
-uv run --with 'acryl-datahub[datahub-rest]' python scripts/emit_clinical_metadata.py
-uv run --with mcp python scripts/mcp_verify_contract.py     # all PASS, exit 0
-
-# Tear down (keeps metadata volumes; pass --nuke to wipe them).
-bash scripts/datahub_down.sh
-```
-
-The DataHub UI is at **http://localhost:9002** (default login `datahub` / `datahub`).
-
-**Secrets:** no tokens are committed. Copy [`.env.example`](.env.example) to `.env`
-(gitignored). The local quickstart runs with metadata-service auth disabled, so
-`DATAHUB_GMS_TOKEN` may be empty; set it for a secured instance.
-
-**Proven in Batch 2** (see [docs/BATCH2_CAPABILITY_MATRIX.md](docs/BATCH2_CAPABILITY_MATRIX.md)):
-all 6 models ingest with the table-level DAG (including `ml_feature_table`'s dual parents),
-**column-level lineage resolves**, `schema.yml` owners **map to DataHub ownership**, the
-MCP read path works, and the Python-SDK write primitives (tag, description, incident) all
-succeed. That document is the frozen contract the remaining batches build against.
-
-### Clinical metadata (Batch 3)
-
-The dbt ingestion alone does not carry the clinical governance semantics the checks need.
-The **emitter** ([`src/ortholineage_guardian/emitter/`](src/ortholineage_guardian/emitter/),
-run via [`scripts/emit_clinical_metadata.py`](scripts/emit_clinical_metadata.py)) promotes
-the governance `meta` keys into first-class, **MCP-readable** DataHub signals at the right
-granularity: **column-level glossary terms** (`DirectIdentifier`, `QuasiIdentifier`,
-`EncounterTimestamp`, `ExplicitMissingness`) and **dataset-level structured properties**
-(`guardian_validation_status`, `guardian_data_product`,
-`guardian_deidentification_required`) plus dataset glossary terms. The emitter is
-idempotent (re-running yields byte-identical aspects), uses no LLM, and writes through the
-validated SDK. [`docs/METADATA_CONTRACT.md`](docs/METADATA_CONTRACT.md) is the **frozen
-contract** the policy engine (Batch 4) reads — nothing else.
-
-### Policy engine + dual-namespace graph (Batch 4)
-
-The deterministic governance engine ([`src/ortholineage_guardian/policy/`](src/ortholineage_guardian/policy/))
-runs three checks and decides whether a violation exists **purely from DataHub metadata
-read over MCP** — it never opens the dbt SQL, the manifest, `catalog.json`, or a DuckDB
-database (enforced by a test with a CPython audit hook). No LLM, no write-back.
-
-| Check | Fires when | Rule class |
-|---|---|---|
-| `PHI_EXPORT_PATH` | a `DirectIdentifier` column has column-lineage into a `research_export` dataset | export-governance |
-| `MISSINGNESS_COLLAPSE` | an `ExplicitMissingness` value column survives downstream but its paired `_missingness` column was dropped | completeness |
-| `UNVALIDATED_ML_SOURCE` | an `ml_feature_table` feature is sourced directly from an `unvalidated` dataset, bypassing the validated registry | readiness |
-
-The stale-`arrival_time` reference is reported as a migration-drift **observation** (the
-impact traversal), not one of the three checks.
-
-To make the **zero-false-positives-on-baseline** claim provable on one GMS, both scenarios
-are ingested under **distinct URN namespaces** (`faulty` → env `PROD`, `baseline` → env
-`DEV`) and both carry the full clinical contract. One command builds, ingests, emits, and
-MCP-verifies the whole dual-world graph:
-
-```bash
-export DATAHUB_GMS_URL=http://localhost:8090
-bash scripts/ingest_all.sh
-```
-
-Then run the engine against either world:
-
-```bash
-uv run --with mcp python scripts/run_policy_engine.py --namespace faulty     # 3 findings
-uv run --with mcp python scripts/run_policy_engine.py --namespace baseline    # 0 findings
-```
-
-Tests (run with `uv run --with mcp pytest -q`): `tests/test_policy_faulty_positives.py`
-(all three fire with correct evidence), `tests/test_policy_baseline_zero_fp.py` (the
-headline zero-false-positive claim), and `tests/test_detection_provenance.py` (the engine
-opens no SQL/manifest/DuckDB). They skip gracefully when DataHub/MCP is unavailable.
-
-### Explanation + remediation drafting (Batch 5)
-
-**Authority split (the judging narrative):**
-
-> Deterministic code decides whether a violation exists. The LLM never decides — it turns a
-> deterministic, lineage-grounded finding into an understandable explanation and a draft
-> remediation, which is schema-validated before any of it is written anywhere. Write-back is
-> performed by validated application code, not by the model.
-
-The LLM layer ([`src/ortholineage_guardian/llm/`](src/ortholineage_guardian/llm/)) takes the
-engine's `Finding` objects as **input** and produces prose + a draft dbt patch as **output**.
-`schema_guard.py` validates everything the model returns and rejects on mismatch, with two
-load-bearing guards: an **entity whitelist** (every dataset/column/term named in the output
-must come from the finding's evidence or the metadata contract — the anti-hallucination
-property) and a **contract-knowledge guard** (the output may never assert observed row data,
-since the engine reads metadata only). A rejected output falls back to template mode; it is
-never silently used.
-
-The LLM is **never required for correctness.** With no API key present — or with `--no-llm`
-— the same validated objects are rendered deterministically from templates, so a judge with
-no key still gets a complete, useful artifact:
-
-```bash
-export DATAHUB_GMS_URL=http://localhost:8090
-uv run --with mcp python scripts/generate_remediation.py --namespace faulty            # LLM if ANTHROPIC_API_KEY set, else template
-uv run --with mcp python scripts/generate_remediation.py --namespace faulty --no-llm   # force deterministic template mode
-```
-
-Set `ANTHROPIC_API_KEY` (and optionally `GUARDIAN_MODEL`, default `claude-opus-4-8`) to
-enable the LLM — see [`.env.example`](.env.example). Committed golden artifacts
-([`tests/golden/`](tests/golden/)) make the template output inspectable without a running
-stack or a key; regenerate them with `uv run python scripts/generate_goldens.py`. Offline
-tests: `tests/test_schema_guard.py` (malformed / hallucinated-entity / claimed-observation
-rejections, mocked — no network), `tests/test_no_llm_fallback.py`, `tests/test_golden_stability.py`.
-
-### Remediation artifacts + controlled write-back (Batch 6) — the closed loop
-
-The agent renders **PR-ready artifacts** from the validated findings and performs
-**controlled write-back** into DataHub, closing the loop **detect → remediate → write back**.
-
-Generated artifacts (deterministic — no timestamps, diff-reviewable), in
-[`examples/`](examples/):
-
-- [`examples/remediation/remediation.patch`](examples/remediation/remediation.patch) — a
-  **real, `git apply`-able** dbt patch fixing all four fixtures (drop `patient_id` from the
-  export, restore the paired `gcs_total_missingness` column, repoint the ML feature to the
-  validated registry, rename the stale `arrival_time`). Verified with `git apply --check`.
-- [`examples/reports/migration_impact_report.md`](examples/reports/migration_impact_report.md)
-  — the rename, the lineage-traversed affected datasets/columns, the three findings with
-  evidence, and the stale-reference observation.
-- [`examples/findings/findings.json`](examples/findings/findings.json) — machine-readable findings.
-
-Write-back is **application code, never LLM-driven**, **dry-run by default**, and
-**idempotent**. Per the frozen contract (`docs/BATCH2_CAPABILITY_MATRIX.md`): a
-governance-finding **tag** + an editable **description** (Required tier) and a DataHub
-**incident** (Preferred tier) on each affected dataset. Baseline (0 findings) writes nothing.
-
-**One-command closed-loop demo:**
-
-```bash
-export DATAHUB_GMS_URL=http://localhost:8090
-bash scripts/datahub_up.sh                                                   # 1. DataHub
-bash scripts/ingest_all.sh                                                   # 2. build + ingest + emit both namespaces
-uv run --with mcp python scripts/run_policy_engine.py --namespace faulty      # 3. detect (3 findings)
-uv run --with mcp python scripts/generate_remediation.py --namespace faulty   # 4. explain + draft (LLM if key, else template)
-uv run --with mcp python scripts/render_artifacts.py --namespace faulty        # 5. render examples/
-uv run --with mcp --with 'acryl-datahub[datahub-rest]' python scripts/writeback.py --namespace faulty            # 6. dry-run (writes nothing)
-uv run --with mcp --with 'acryl-datahub[datahub-rest]' python scripts/writeback.py --namespace faulty --apply    # 7. write tag + description + incident
-uv run --with mcp python scripts/writeback_verify.py --namespace faulty --expect present   # 8. read back through MCP
-uv run --with 'acryl-datahub[datahub-rest]' python scripts/writeback_reset.py --namespace faulty                 # 9. clean the graph for re-recording
-```
-
-Tests: `tests/test_artifacts.py` (the patch applies + golden-stable) and
-`tests/test_writeback.py` (dry-run plan, baseline-zero, validated-only) — offline.
-
----
-
-## Repository layout (Batch 1)
+## Repository layout
 
 ```
 ortholineage-guardian/
-├── LICENSE                  Apache-2.0
+├── LICENSE                     Apache-2.0
 ├── README.md
-├── CLAUDE.md                invariants + working rules for agents
-├── pyproject.toml           pinned toolchain (dbt-core, dbt-duckdb, duckdb)
-├── uv.lock                  locked resolution
-├── dbt_project.yml          defines var `scenario` (default: baseline)
-├── profiles/profiles.yml    baseline + faulty targets → separate DuckDB files
-├── seeds/                   deterministic, hand-authored raw CSV
-├── models/
-│   ├── staging/             stg_ed_documentation
-│   ├── registry/            trauma_registry  (rename + MISSINGNESS_COLLAPSE)
-│   ├── quality/             dq_metrics
-│   ├── export/              research_export  (PHI_EXPORT_PATH)
-│   ├── ml/                  ml_feature_table (UNVALIDATED_ML_SOURCE)
-│   ├── report/              dashboard_report (STALE_REFERENCE)
-│   └── schema.yml           model/column metadata + governance meta keys
-├── tests/                   dbt singular tests + pytest scenario-diff suite
-├── examples/                (generated remediation artifacts — later batches)
-└── scripts/build.sh         build + test both scenarios + docs generate
+├── CLAUDE.md                   invariants + working rules for agents
+├── pyproject.toml / uv.lock    pinned toolchain + `guardian` console script
+├── dbt_project.yml             defines var `scenario` (default: baseline)
+├── profiles/profiles.yml       baseline + faulty targets → separate DuckDB files
+├── seeds/                      deterministic, hand-authored raw CSV
+├── models/                     staging · registry · quality · export · ml · report + schema.yml
+├── src/ortholineage_guardian/
+│   ├── cli.py                  the unified `guardian` command
+│   ├── mcp_client.py           MCP read path (lineage + schema/tags/properties)
+│   ├── lineage.py              impact-graph traversal
+│   ├── emitter/                clinical metadata emitter (glossary terms + structured properties)
+│   ├── policy/                 the three deterministic checks + engine (decides)
+│   ├── llm/                    explain + draft + schema guard (explains/drafts only)
+│   ├── remediation/            renders the dbt patch + impact report
+│   └── writeback/              controlled SDK write-back (tag + description + incident)
+├── scripts/                    build.sh · demo.sh · datahub_*.sh · the wrapped step scripts
+├── examples/                   generated PR-ready artifacts (patch + report + findings)
+├── tests/                      scenario-diff · policy (zero-FP) · provenance · schema-guard · artifacts · write-back
+└── docs/                       METADATA_CONTRACT.md · BATCH2_CAPABILITY_MATRIX.md · SUBMISSION_CHECKLIST.md
 ```
+
+---
+
+## Invariants
+
+- **GOVERNANCE-ONLY.** Governs metadata, provenance, and data quality. Never emits
+  diagnosis, treatment, triage, or clinical recommendation. All data synthetic and PHI-free.
+- **AUTHORITY SPLIT.** Deterministic code decides; the LLM only explains and drafts
+  (schema-validated); write-back is validated application code, never the model.
+- **DETECTION PROVENANCE.** Violations detected exclusively from DataHub metadata — never by
+  reading the dbt SQL where defects are planted.
+- **SCENARIO INTEGRITY.** One model tree; scenario via a deterministic dbt var. `baseline` is
+  clean; `faulty` carries exactly the four documented fixtures. Zero defects in baseline,
+  proven by tests.
 
 ## License
 

@@ -1,0 +1,36 @@
+name: CI
+
+# Offline suite only — no Docker, no DataHub/MCP, no API key. This is exactly the set a
+# stranger can reproduce with a bare `uv sync`: the dbt scenario-diff tests, the schema
+# guard, the golden-stability checks, the generated-patch applicability, and the
+# write-back plan. The graph-dependent tests SKIP themselves when GMS is unreachable.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync the pinned toolchain
+        run: uv sync --locked
+
+      - name: Lockfile is up to date
+        run: uv lock --check
+
+      - name: guardian CLI is wired
+        run: uv run guardian --help
+
+      - name: Build both scenarios + offline test suite
+        # scripts/build.sh builds baseline + faulty (into separate DuckDBs), runs the
+        # pytest scenario-diff + schema-guard + artifact + write-back-plan suite, and
+        # generates the dbt docs. No Docker, no DataHub/MCP, no API key.
+        run: bash scripts/build.sh
