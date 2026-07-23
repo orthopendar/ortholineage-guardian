@@ -8,6 +8,7 @@ __pycache__/
 *.pyc
 .venv/
 .uv/
+.pytest_cache/
 
 # dbt user-local
 .user.yml

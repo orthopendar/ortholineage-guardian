@@ -1,0 +1,21 @@
+# dbt profile for OrthoLineage Guardian.
+#
+# Two targets, one per scenario, each writing to its OWN DuckDB file so the
+# baseline and faulty states never share a database:
+#   --target baseline  -> baseline.duckdb
+#   --target faulty     -> faulty.duckdb
+#
+# The scenario itself is chosen with `--vars '{scenario: ...}'`; the target only
+# selects which DuckDB file the build lands in. Keep them paired (baseline var +
+# baseline target, faulty var + faulty target); scripts/build.sh does this.
+ortholineage_guardian:
+  target: baseline
+  outputs:
+    baseline:
+      type: duckdb
+      path: "baseline.duckdb"
+      threads: 1
+    faulty:
+      type: duckdb
+      path: "faulty.duckdb"
+      threads: 1
