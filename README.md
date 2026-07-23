@@ -201,12 +201,24 @@ schema-validated (entity whitelist + no-claimed-observations guard) before use, 
 rejected output silently falls back to the template. It never mutates the graph; write-back
 is application code.
 
-To enable it, copy [`.env.example`](.env.example) to `.env` and set `ANTHROPIC_API_KEY`
-(and optionally `GUARDIAN_MODEL`, default `claude-opus-4-8`). The `guardian` CLI reads
-`.env` from the repo root, so `guardian artifacts` and `scripts/demo.sh` pick the key up
-automatically; an explicit `export ANTHROPIC_API_KEY=…` in your shell still wins. Committed
-golden artifacts ([`tests/golden/`](tests/golden/)) make the template output inspectable
-without a stack or a key.
+To see the LLM engage, run the explanation view — it prints the mode (`llm` or `template`)
+next to every explanation and draft:
+
+```bash
+guardian explain --namespace faulty            # LLM if a key is set, else template
+guardian explain --namespace faulty --no-llm   # force deterministic template mode
+```
+
+To enable the LLM, copy [`.env.example`](.env.example) to `.env` and set
+`ANTHROPIC_API_KEY` (and optionally `GUARDIAN_MODEL`, default `claude-opus-4-8`). The
+`guardian` CLI reads `.env` from the repo root, so `guardian explain` picks the key up
+automatically; an explicit `export ANTHROPIC_API_KEY=…` in your shell still wins.
+
+Note the **committed `examples/` artifacts are always rendered in template mode** (by
+`guardian artifacts`) so they stay deterministic and diff-reviewable regardless of whether
+a key is present — the LLM enriches the *explanation prose*, not the committed files.
+Committed golden artifacts ([`tests/golden/`](tests/golden/)) make the template output
+inspectable without a stack or a key.
 
 ---
 
@@ -291,7 +303,8 @@ the dependency context that step needs and prints one line describing what it do
 | `guardian up` | start DataHub (docker quickstart, GMS on :8090) |
 | `guardian ingest` | build + ingest + emit clinical metadata for both namespaces |
 | `guardian scan [--namespace]` | run the deterministic policy engine (metadata only) |
-| `guardian artifacts [--namespace]` | render PR-ready artifacts into `examples/` |
+| `guardian explain [--namespace] [--no-llm]` | explain findings + draft remediation (LLM if key, else template; prints only) |
+| `guardian artifacts [--namespace]` | render PR-ready artifacts into `examples/` (deterministic template mode) |
 | `guardian writeback [--namespace] [--apply]` | controlled write-back (dry-run unless `--apply`) |
 | `guardian verify [--namespace] [--expect present\|clean]` | read the write-back back through MCP |
 | `guardian reset [--namespace]` | remove everything the guardian wrote |

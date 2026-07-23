@@ -8,7 +8,8 @@ and prints one line describing each step, so the demo reads as one coherent tool
     guardian up                     # start DataHub (docker quickstart)
     guardian ingest                 # build + ingest + emit BOTH namespaces
     guardian scan [--namespace]     # run the deterministic policy engine
-    guardian artifacts [--namespace]# render PR-ready artifacts into examples/
+    guardian explain [--namespace]  # explain + draft remediation (LLM if key, else template)
+    guardian artifacts [--namespace]# render PR-ready artifacts into examples/ (deterministic)
     guardian writeback [--apply]    # controlled write-back (dry-run unless --apply)
     guardian verify [--expect]      # read the write-back back THROUGH MCP
     guardian reset [--namespace]    # remove everything the guardian wrote
@@ -85,6 +86,17 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_explain(args: argparse.Namespace) -> int:
+    cmd = _PY_MCP + [_script("generate_remediation.py"), "--namespace", args.namespace]
+    if args.no_llm:
+        cmd.append("--no-llm")
+    mode = "template mode (forced)" if args.no_llm else "LLM if a key is set, else template"
+    return _run(
+        cmd,
+        f"explaining + drafting remediation for '{args.namespace}' — {mode} (prints only)",
+    )
+
+
 def _cmd_artifacts(args: argparse.Namespace) -> int:
     return _run(
         _PY_MCP + [_script("render_artifacts.py"), "--namespace", args.namespace],
@@ -150,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan = sub.add_parser("scan", help="run the deterministic policy engine (metadata only)")
     _add_namespace(p_scan)
     p_scan.set_defaults(func=_cmd_scan)
+
+    p_exp = sub.add_parser("explain", help="explain findings + draft remediation (LLM if key, else template; prints only)")
+    _add_namespace(p_exp)
+    p_exp.add_argument("--no-llm", action="store_true", help="force deterministic template mode")
+    p_exp.set_defaults(func=_cmd_explain)
 
     p_art = sub.add_parser("artifacts", help="render PR-ready remediation artifacts into examples/")
     _add_namespace(p_art)
