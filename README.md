@@ -213,6 +213,11 @@ uv tool run --python 3.11 --from 'acryl-datahub[dbt]' datahub ingest -c ingest/d
 # 3. Smoke-test the DataHub MCP read path (lineage + schema/properties).
 uv run --with mcp python scripts/mcp_smoke.py
 
+# 4. Emit the clinical governance metadata (Batch 3), then verify every signal is
+#    readable back through the MCP path at the correct granularity.
+uv run --with 'acryl-datahub[datahub-rest]' python scripts/emit_clinical_metadata.py
+uv run --with mcp python scripts/mcp_verify_contract.py     # all PASS, exit 0
+
 # Tear down (keeps metadata volumes; pass --nuke to wipe them).
 bash scripts/datahub_down.sh
 ```
@@ -228,6 +233,20 @@ all 6 models ingest with the table-level DAG (including `ml_feature_table`'s dua
 **column-level lineage resolves**, `schema.yml` owners **map to DataHub ownership**, the
 MCP read path works, and the Python-SDK write primitives (tag, description, incident) all
 succeed. That document is the frozen contract the remaining batches build against.
+
+### Clinical metadata (Batch 3)
+
+The dbt ingestion alone does not carry the clinical governance semantics the checks need.
+The **emitter** ([`src/ortholineage_guardian/emitter/`](src/ortholineage_guardian/emitter/),
+run via [`scripts/emit_clinical_metadata.py`](scripts/emit_clinical_metadata.py)) promotes
+the governance `meta` keys into first-class, **MCP-readable** DataHub signals at the right
+granularity: **column-level glossary terms** (`DirectIdentifier`, `QuasiIdentifier`,
+`EncounterTimestamp`, `ExplicitMissingness`) and **dataset-level structured properties**
+(`guardian_validation_status`, `guardian_data_product`,
+`guardian_deidentification_required`) plus dataset glossary terms. The emitter is
+idempotent (re-running yields byte-identical aspects), uses no LLM, and writes through the
+validated SDK. [`docs/METADATA_CONTRACT.md`](docs/METADATA_CONTRACT.md) is the **frozen
+contract** the policy engine (Batch 4) reads — nothing else.
 
 ---
 
