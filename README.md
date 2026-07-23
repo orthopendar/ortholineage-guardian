@@ -201,10 +201,12 @@ schema-validated (entity whitelist + no-claimed-observations guard) before use, 
 rejected output silently falls back to the template. It never mutates the graph; write-back
 is application code.
 
-Set `ANTHROPIC_API_KEY` (and optionally `GUARDIAN_MODEL`, default `claude-opus-4-8`) in a
-`.env` to enable it — see [`.env.example`](.env.example). Committed golden artifacts
-([`tests/golden/`](tests/golden/)) make the template output inspectable without a stack or
-a key.
+To enable it, copy [`.env.example`](.env.example) to `.env` and set `ANTHROPIC_API_KEY`
+(and optionally `GUARDIAN_MODEL`, default `claude-opus-4-8`). The `guardian` CLI reads
+`.env` from the repo root, so `guardian artifacts` and `scripts/demo.sh` pick the key up
+automatically; an explicit `export ANTHROPIC_API_KEY=…` in your shell still wins. Committed
+golden artifacts ([`tests/golden/`](tests/golden/)) make the template output inspectable
+without a stack or a key.
 
 ---
 

@@ -20,12 +20,34 @@ application code. The CLI never makes a governance decision — it just wires th
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
+
+
+def _load_dotenv() -> None:
+    """Load `KEY=VALUE` lines from the repo-root .env into the environment.
+
+    `uv run` does not read .env, so without this the ANTHROPIC_API_KEY a user puts in
+    .env (as .env.example and the README instruct) would be silently ignored and the LLM
+    layer would never engage. An already-set variable always wins, so an explicit
+    `export` still overrides the file. No third-party dependency.
+    """
+    env_path = ROOT / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 # Dependency contexts, matched to what each underlying script imports.
 _PY = ["uv", "run", "python"]
@@ -158,6 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _load_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
