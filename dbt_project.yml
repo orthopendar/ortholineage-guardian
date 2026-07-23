@@ -1,0 +1,59 @@
+name: ortholineage_guardian
+version: "0.1.0"
+config-version: 2
+
+# One model tree. The scenario is selected at run time with this var; the two
+# scenarios differ ONLY at the four planted-defect sites (guarded by
+# {% if var('scenario') == 'faulty' %} conditionals). NEVER duplicate model
+# folders per scenario.
+vars:
+  scenario: baseline
+
+profile: ortholineage_guardian
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  ortholineage_guardian:
+    staging:
+      +materialized: view
+    registry:
+      +materialized: table
+    quality:
+      +materialized: table
+    export:
+      +materialized: table
+    ml:
+      +materialized: table
+    report:
+      +materialized: table
+
+seeds:
+  ortholineage_guardian:
+    ed_documentation_raw:
+      +column_types:
+        registry_case_id: varchar
+        registry_site_code: varchar
+        patient_id: varchar
+        medical_record_number: varchar
+        arrival_time: varchar
+        injury_datetime: varchar
+        mode_of_arrival: varchar
+        mechanism_category: varchar
+        mechanism_category_missingness: varchar
+        gcs_total: varchar
+        gcs_total_missingness: varchar
+        gcs_eye: varchar
+        gcs_verbal: varchar
+        gcs_motor: varchar
+        gcs_qualifier: varchar
+        age_at_injury_band: varchar
+        sex_at_registry_capture: varchar

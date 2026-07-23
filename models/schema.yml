@@ -1,0 +1,241 @@
+version: 2
+
+# ---------------------------------------------------------------------------------------
+# Model + column metadata for OrthoLineage Guardian.
+#
+# The `meta` keys below (sensitivity, clinical_semantic, missingness_contract,
+# validation_status, data_product, deidentification_required) are the frozen governance
+# vocabulary. In Batch 1 they are AUTHORED here. A later batch's clinical emitter
+# translates them into DataHub tags / structured properties / glossary terms; the policy
+# engine then reads ONLY those metadata signals (never this SQL).
+#
+# OWNERSHIP: each model declares an owner identifier below. How the installed dbt
+# ingestion maps these schema.yml owner identifiers onto DataHub ownership is
+# VERIFY-IN-BATCH-2 — proven there, not assumed here.
+#
+# Paired-column guarantee: every column tagged `missingness_contract: explicit`
+# (gcs_total, mechanism_category) has a paired `<field>_missingness` state column in its
+# source and in every baseline downstream model that carries the value. The encounter
+# timestamp (arrival_time / ed_arrival_datetime) is a quasi-identifier and is deliberately
+# NOT tagged `missingness_contract: explicit` — it has no paired `_missingness` column, so
+# tagging it explicit would break the paired-column guarantee.
+# ---------------------------------------------------------------------------------------
+
+models:
+  - name: stg_ed_documentation
+    description: >
+      Staging over the raw, unvalidated ED documentation source. Pre-rename world: carries
+      `arrival_time`, the direct identifiers as captured at intake, and both paired
+      value + `<field>_missingness` columns. No planted defects live here.
+    config:
+      meta:
+        owner: ed-source-steward@ortholineage.example
+        validation_status: unvalidated   # dataset-level: this raw source is unvalidated
+    columns:
+      - name: registry_case_id
+        description: Synthetic de-identified case key.
+        data_tests: [unique, not_null]
+      - name: registry_site_code
+        description: Site / facility code.
+      - name: patient_id
+        description: Direct identifier (synthetic teaching field).
+        meta: { sensitivity: direct_identifier }
+        data_tests: [not_null]
+      - name: medical_record_number
+        description: Direct identifier (synthetic teaching field).
+        meta: { sensitivity: direct_identifier }
+      - name: arrival_time
+        description: >
+          ED arrival encounter timestamp (quasi-identifier). Renamed to
+          `ed_arrival_datetime` downstream in trauma_registry.
+        meta:
+          clinical_semantic: encounter_timestamp
+          sensitivity: quasi_identifier
+      - name: injury_datetime
+        description: Injury timestamp (quasi-identifier).
+        meta: { sensitivity: quasi_identifier }
+      - name: mode_of_arrival
+        description: Mode of arrival (non-PHI clinical enum).
+      - name: mechanism_category
+        description: >
+          Injury mechanism category (non-PHI clinical enum). Carries explicit missingness
+          via the paired `mechanism_category_missingness` state column.
+        meta: { missingness_contract: explicit }
+      - name: mechanism_category_missingness
+        description: >
+          Paired explicit-missingness state for mechanism_category. One of the frozen
+          vocabulary: PRESENT | NOT_DOCUMENTED | NOT_ASSESSED | NOT_APPLICABLE | UNKNOWN.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['PRESENT', 'NOT_DOCUMENTED', 'NOT_ASSESSED', 'NOT_APPLICABLE', 'UNKNOWN']
+      - name: gcs_total
+        description: >
+          Glasgow Coma Scale total (non-PHI clinical). Carries explicit missingness via the
+          paired `gcs_total_missingness` state column.
+        meta: { missingness_contract: explicit }
+      - name: gcs_total_missingness
+        description: >
+          Paired explicit-missingness state for gcs_total, from the frozen vocabulary.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['PRESENT', 'NOT_DOCUMENTED', 'NOT_ASSESSED', 'NOT_APPLICABLE', 'UNKNOWN']
+      - name: gcs_eye
+        description: GCS eye component.
+      - name: gcs_verbal
+        description: GCS verbal component.
+      - name: gcs_motor
+        description: GCS motor component.
+      - name: gcs_qualifier
+        description: >
+          Testability context explaining why a GCS component may be absent. Where
+          gcs_total_missingness is NOT_ASSESSED, this holds a clinically coherent reason
+          (e.g. INTUBATED, SEDATED, PARALYZED).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['UNQUALIFIED', 'INTUBATED', 'SEDATED', 'PARALYZED', 'EYE_OBSTRUCTION', 'UNKNOWN_CONTEXT']
+      - name: age_at_injury_band
+        description: Banded (de-identified) age at injury.
+      - name: sex_at_registry_capture
+        description: Sex recorded at registry capture (non-PHI enum).
+
+  - name: trauma_registry
+    description: >
+      Registry model. The migration RENAME lands here under both scenarios
+      (arrival_time -> ed_arrival_datetime). Planted-defect site for MISSINGNESS_COLLAPSE
+      (faulty only): the paired gcs_total_missingness state column is dropped and the
+      collapsed states become a single NULL.
+    config:
+      meta:
+        owner: registry-coordinator@ortholineage.example
+    columns:
+      - name: registry_case_id
+        description: Synthetic de-identified case key.
+        data_tests: [unique, not_null]
+      - name: patient_id
+        description: Direct identifier; isolated at export, not dropped here.
+        meta: { sensitivity: direct_identifier }
+      - name: medical_record_number
+        description: Direct identifier; isolated at export, not dropped here.
+        meta: { sensitivity: direct_identifier }
+      - name: ed_arrival_datetime
+        description: >
+          ED arrival encounter timestamp (quasi-identifier) — the post-rename name of
+          arrival_time. This is the hero migration field.
+        meta:
+          clinical_semantic: encounter_timestamp
+          sensitivity: quasi_identifier
+        data_tests: [not_null]
+      - name: injury_datetime
+        description: Injury timestamp (quasi-identifier).
+        meta: { sensitivity: quasi_identifier }
+      - name: mechanism_category
+        description: Injury mechanism category; paired with mechanism_category_missingness.
+        meta: { missingness_contract: explicit }
+      - name: mechanism_category_missingness
+        description: Paired explicit-missingness state for mechanism_category.
+      - name: gcs_total
+        description: >
+          GCS total; carries explicit missingness. In baseline it is paired with
+          gcs_total_missingness; in faulty the paired state column is dropped (the
+          MISSINGNESS_COLLAPSE defect).
+        meta: { missingness_contract: explicit }
+      - name: gcs_total_missingness
+        description: >
+          Paired explicit-missingness state for gcs_total. Present in baseline; DROPPED in
+          faulty by the MISSINGNESS_COLLAPSE defect (documented here even though absent
+          from the faulty schema).
+
+  - name: dq_metrics
+    description: >
+      Data-quality / completeness + temporal-integrity metrics. Reads the post-rename
+      ed_arrival_datetime (never the stale arrival_time). No direct identifiers. Identical
+      under both scenarios.
+    config:
+      meta:
+        owner: data-quality-owner@ortholineage.example
+    columns:
+      - name: registry_case_id
+        description: Synthetic de-identified case key.
+        data_tests: [unique, not_null]
+      - name: ed_arrival_datetime
+        description: Post-rename encounter timestamp used for temporal-integrity metrics.
+        meta:
+          clinical_semantic: encounter_timestamp
+          sensitivity: quasi_identifier
+      - name: arrival_after_injury_flag
+        description: 1 when arrival is not before injury (temporal integrity).
+      - name: gcs_value_present_flag
+        description: 1 when gcs_total is populated.
+      - name: mechanism_present_flag
+        description: 1 when mechanism_category_missingness = PRESENT.
+      - name: mechanism_category_missingness
+        description: Surviving paired missingness state carried for completeness reporting.
+
+  - name: research_export
+    description: >
+      De-identified research product. Must never carry a direct identifier. Planted-defect
+      site for PHI_EXPORT_PATH (faulty only): patient_id is retained in the export.
+    config:
+      meta:
+        owner: research-export-owner@ortholineage.example
+        data_product: research_export        # dataset-level
+        deidentification_required: true       # dataset-level
+    columns:
+      - name: registry_case_id
+        description: Synthetic de-identified case key.
+        data_tests: [not_null]
+      - name: ed_arrival_datetime
+        description: Quasi-identifier encounter timestamp retained on the export.
+        meta:
+          clinical_semantic: encounter_timestamp
+          sensitivity: quasi_identifier
+      - name: mechanism_category
+        description: Injury mechanism; paired with mechanism_category_missingness on export.
+        meta: { missingness_contract: explicit }
+      - name: mechanism_category_missingness
+        description: Paired explicit-missingness state carried through to the export.
+
+  - name: ml_feature_table
+    description: >
+      Features for downstream models. Baseline derives every feature from the governed
+      trauma_registry. Planted-defect site for UNVALIDATED_ML_SOURCE (faulty only): at
+      least one feature is read directly from stg_ed_documentation (validation_status:
+      unvalidated), bypassing trauma_registry.
+    config:
+      meta:
+        owner: ml-platform-owner@ortholineage.example
+    columns:
+      - name: registry_case_id
+        description: Synthetic de-identified case key.
+        data_tests: [unique, not_null]
+      - name: ed_arrival_datetime
+        description: Post-rename temporal feature / carried for the downstream report.
+        meta:
+          clinical_semantic: encounter_timestamp
+          sensitivity: quasi_identifier
+      - name: gcs_missing_flag
+        description: 1 when gcs_total is null.
+      - name: mechanism_present_flag
+        description: 1 when mechanism_category_missingness = PRESENT.
+      - name: age_at_injury_band
+        description: Banded age feature.
+
+  - name: dashboard_report
+    description: >
+      Summary surface over ml_feature_table. Baseline uses the post-rename
+      ed_arrival_datetime. Planted-defect site for STALE_REFERENCE (faulty only): still
+      exposes the pre-rename name `arrival_time`.
+    config:
+      meta:
+        owner: reporting-owner@ortholineage.example
+    columns:
+      - name: case_count
+        description: Number of cases summarised.
+        data_tests: [not_null]
+      - name: gcs_missing_count
+        description: Count of cases with a missing GCS value.
+      - name: mechanism_present_count
+        description: Count of cases with mechanism documented.
