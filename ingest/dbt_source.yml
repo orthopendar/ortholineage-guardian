@@ -21,6 +21,9 @@ source:
     # The warehouse platform the dbt models materialise into.
     target_platform: duckdb
     platform_instance: ortholineage_guardian
+    # URN environment (fabric). Batch 4 ingests the two scenarios under distinct
+    # namespaces: faulty=PROD (default), baseline=DEV. scripts/ingest_all.sh sets this.
+    env: "${DBT_INGEST_ENV:-PROD}"
     # Emit column-level lineage (named-column SELECTs make identifier/timestamp paths
     # resolvable). This is the substrate the impact traversal walks.
     include_column_lineage: true

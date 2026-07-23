@@ -36,8 +36,10 @@ from __future__ import annotations
 FIXED_AUDIT_TIME_MS = 1704067200000  # 2024-01-01T00:00:00Z
 SYSTEM_ACTOR = "urn:li:corpuser:datahub"
 
+import dataclasses
+
 DATA_PLATFORM_DBT = "urn:li:dataPlatform:dbt"
-DATASET_PREFIX = "ortholineage_guardian.faulty.main"
+PLATFORM_INSTANCE = "ortholineage_guardian"
 
 MODELS = [
     "stg_ed_documentation",
@@ -49,8 +51,32 @@ MODELS = [
 ]
 
 
-def dataset_urn(model: str) -> str:
-    return f"urn:li:dataset:({DATA_PLATFORM_DBT},{DATASET_PREFIX}.{model},PROD)"
+@dataclasses.dataclass(frozen=True)
+class Namespace:
+    """A distinct DataHub URN namespace for one dbt scenario.
+
+    The scenario's DuckDB file name becomes the URN `database` segment, and the DataHub
+    dbt-source `env` becomes the URN environment segment. Batch 4 ingests the two worlds
+    under distinct namespaces (faulty=PROD, baseline=DEV) so the engine can be pointed at
+    either graph and the baseline zero-false-positive claim is provable on the same GMS.
+    """
+
+    name: str          # logical scenario name: "faulty" | "baseline"
+    database: str      # DuckDB db in the URN (faulty.duckdb -> "faulty")
+    env: str           # DataHub fabric / URN env: "PROD" | "DEV"
+    platform_instance: str = PLATFORM_INSTANCE
+
+
+FAULTY = Namespace(name="faulty", database="faulty", env="PROD")
+BASELINE = Namespace(name="baseline", database="baseline", env="DEV")
+NAMESPACES: dict[str, Namespace] = {ns.name: ns for ns in (FAULTY, BASELINE)}
+
+
+def dataset_urn(model: str, ns: Namespace = FAULTY) -> str:
+    return (
+        f"urn:li:dataset:({DATA_PLATFORM_DBT},"
+        f"{ns.platform_instance}.{ns.database}.main.{model},{ns.env})"
+    )
 
 
 def term_urn(name: str) -> str:
